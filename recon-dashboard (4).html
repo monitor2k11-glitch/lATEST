@@ -1,0 +1,2339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVL-071 · Trade Surveillance Reconciliation Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   TOKEN SYSTEM
+   Color   : ink navy surfaces, cyan systems accent, semantic
+             pass/warn/fail, per-flow identity colors (ETD/OTC/NON-OTC)
+   Type    : Space Grotesk (headers/eyebrows), Inter (body/UI),
+             IBM Plex Mono (all data: ids, counts, codes)
+   Layout  : fixed top rail + tab bar, dense card grid, schematic
+             lineage diagram with live connector ticks
+   Signature: the lineage rail — a literal circuit-schematic of the
+             R071 -> Surveillance.Trades pipeline, ticked with live
+             record counts instead of decoration
+   ============================================================ */
+:root{
+  --bg:            #0a0f1a;
+  --bg-raised:     #0e1524;
+  --panel:         #121a2c;
+  --panel-2:       color-mix(in srgb, var(--panel) 60%, transparent);
+  --border:        #22304a;
+  --border-soft:   #1a2439;
+  --text:          #dbe4f3;
+  --text-dim:      #8a97b3;
+  --text-faint:    #566280;
+  --accent:        #29d3e0;
+  --accent-dim:    color-mix(in srgb, var(--accent) 13%, transparent);
+  --pass:          #3ddc97;
+  --pass-dim:      color-mix(in srgb, var(--pass) 13%, transparent);
+  --warn:          #f2b84b;
+  --warn-dim:      color-mix(in srgb, var(--warn) 13%, transparent);
+  --fail:          #f2637a;
+  --fail-dim:      color-mix(in srgb, var(--fail) 13%, transparent);
+  --etd:           #9d8cf7;
+  --etd-dim:       color-mix(in srgb, var(--etd) 13%, transparent);
+  --otc:           #29d3e0;
+  --otc-dim:       color-mix(in srgb, var(--otc) 13%, transparent);
+  --nonotc:        #f2955b;
+  --nonotc-dim:    color-mix(in srgb, var(--nonotc) 13%, transparent);
+  --radius:        6px;
+  --radius-sm:     6px;
+  --radius-pill:   20px;
+  --border-width:  1px;
+  --font-head:     'Space Grotesk', sans-serif;
+  --font-body:     'Inter', sans-serif;
+  --font-mono:     'IBM Plex Mono', monospace;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  background:
+    radial-gradient(ellipse 1200px 600px at 15% -10%, #142238 0%, transparent 60%),
+    var(--bg);
+  color:var(--text);
+  font-family:var(--font-body);
+  font-size:13.5px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+::selection{background:var(--accent-dim); color:var(--accent);}
+::-webkit-scrollbar{width:9px; height:9px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#2a3a5c; border-radius:4px;}
+::-webkit-scrollbar-thumb:hover{background:#3a4d76;}
+a{color:inherit;}
+button{font-family:inherit; cursor:pointer;}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+.mono{font-family:var(--font-mono);}
+.eyebrow{
+  font-family:var(--font-mono); font-size:10.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--text-faint);
+}
+
+/* ---------- shell ---------- */
+.app-shell{max-width:1580px; margin:0 auto; padding:0 28px 60px;}
+
+.top-rail{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:20px 0 16px; border-bottom:var(--border-width) solid var(--border-soft);
+  margin-bottom:0; flex-wrap:wrap; gap:14px;
+}
+.brand{display:flex; align-items:center; gap:12px;}
+.brand-mark{
+  width:34px; height:34px; border-radius:7px;
+  background:linear-gradient(135deg, var(--accent) 0%, #1a7f8c 100%);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-mono); font-weight:600; font-size:13px; color:#04161a;
+  flex-shrink:0;
+}
+.brand-text h1{
+  font-family:var(--font-head); font-size:16.5px; font-weight:600;
+  letter-spacing:.01em; color:var(--text);
+}
+.brand-text .sub{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); margin-top:1px;}
+
+.rail-status{display:flex; align-items:center; gap:22px; flex-wrap:wrap;}
+.status-chip{display:flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim);}
+.dot{width:7px; height:7px; border-radius:50%; background:var(--text-faint); flex-shrink:0;}
+.dot.on{background:var(--pass); box-shadow:0 0 8px var(--pass);}
+.dot.off{background:var(--fail); box-shadow:0 0 8px var(--fail);}
+.run-time{font-family:var(--font-mono); font-size:11px; color:var(--text-faint);}
+
+/* ---------- tabs ---------- */
+.tab-bar{
+  display:flex; gap:2px; margin:18px 0 22px; border-bottom:var(--border-width) solid var(--border-soft);
+  overflow-x:auto;
+}
+.tab-btn{
+  background:none; border:none; color:var(--text-dim);
+  font-family:var(--font-body); font-weight:600; font-size:12.5px;
+  padding:11px 16px; border-bottom:2px solid transparent;
+  white-space:nowrap; transition:color .15s, border-color .15s;
+  display:flex; align-items:center; gap:7px;
+}
+.tab-btn:hover{color:var(--text);}
+.tab-btn.active{color:var(--accent); border-bottom-color:var(--accent);}
+.tab-btn .tag{
+  font-family:var(--font-mono); font-size:9.5px; background:var(--panel-2);
+  border:var(--border-width) solid var(--border); padding:1px 6px; border-radius:var(--radius-pill); color:var(--text-faint);
+}
+.tab-btn.active .tag{border-color:var(--accent); color:var(--accent);}
+
+.tab-panel{display:none; animation:fadein .25s ease;}
+.tab-panel.active{display:block;}
+@keyframes fadein{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+
+/* ---------- section headers ---------- */
+.section-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;}
+.section-head h2{font-family:var(--font-head); font-size:17px; font-weight:600;}
+.section-head p{color:var(--text-dim); font-size:12.5px; margin-top:2px;}
+
+/* ---------- KPI cards ---------- */
+.kpi-grid{display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:22px;}
+@media(max-width:1200px){.kpi-grid{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:640px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
+.kpi{
+  background:var(--panel); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius);
+  padding:14px 15px; position:relative; overflow:hidden;
+}
+.kpi::before{
+  content:''; position:absolute; top:0; left:0; width:100%; height:2px;
+  background:var(--kpi-accent, var(--accent));
+}
+.kpi .k-label{font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; color:var(--text-faint); text-transform:uppercase;}
+.kpi .k-value{font-family:var(--font-mono); font-size:24px; font-weight:600; margin-top:6px; color:var(--text);}
+.kpi .k-sub{font-size:11px; color:var(--text-dim); margin-top:4px;}
+.kpi.pass{--kpi-accent:var(--pass);}
+.kpi.fail{--kpi-accent:var(--fail);}
+.kpi.warn{--kpi-accent:var(--warn);}
+
+/* ---------- flow status row ---------- */
+.flow-row{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:22px;}
+@media(max-width:900px){.flow-row{grid-template-columns:1fr;}}
+.flow-card{
+  background:var(--panel); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius);
+  padding:16px 17px;
+}
+.flow-card .fc-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;}
+.flow-card .fc-title{display:flex; align-items:center; gap:9px; font-family:var(--font-head); font-weight:600; font-size:14px;}
+.flow-swatch{width:9px; height:9px; border-radius:2px; flex-shrink:0;}
+.badge{
+  font-family:var(--font-mono); font-size:10px; padding:3px 8px; border-radius:var(--radius-pill);
+  border:1px solid; letter-spacing:.03em; text-transform:uppercase; font-weight:600;
+}
+.badge.pass{color:var(--pass); border-color:var(--pass); background:var(--pass-dim);}
+.badge.warn{color:var(--warn); border-color:var(--warn); background:var(--warn-dim);}
+.badge.fail{color:var(--fail); border-color:var(--fail); background:var(--fail-dim);}
+.fc-metrics{display:flex; justify-content:space-between; margin-bottom:10px;}
+.fc-metric{text-align:left;}
+.fc-metric .m-val{font-family:var(--font-mono); font-size:17px; font-weight:600;}
+.fc-metric .m-lbl{font-size:10.5px; color:var(--text-faint); margin-top:2px;}
+.progress-track{height:6px; background:var(--border-soft); border-radius:var(--radius-pill); overflow:hidden; margin-top:4px;}
+.progress-fill{height:100%; border-radius:var(--radius-pill); transition:width .4s ease;}
+
+/* ---------- panels / cards ---------- */
+.panel{background:var(--panel); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius); padding:18px; margin-bottom:20px;}
+.panel-title{font-family:var(--font-head); font-weight:600; font-size:14.5px; margin-bottom:4px;}
+.panel-sub{color:var(--text-dim); font-size:12px; margin-bottom:14px;}
+
+/* ---------- break-rate bars ---------- */
+.rate-list{display:flex; flex-direction:column; gap:10px;}
+.rate-row{display:grid; grid-template-columns:190px 1fr 70px; align-items:center; gap:12px;}
+.rate-row .r-label{font-size:12px; color:var(--text-dim);}
+.rate-row .r-val{font-family:var(--font-mono); font-size:12px; text-align:right;}
+
+/* ---------- lineage diagram ---------- */
+.lineage-scroll{overflow-x:auto; padding-bottom:8px;}
+.lineage-diagram{min-width:1360px; position:relative; padding:10px 0 4px;}
+.lane-label{font-family:var(--font-mono); font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px;}
+.lineage-row{display:flex; align-items:stretch; gap:0; margin-bottom:6px;}
+.node{
+  background:var(--bg-raised); border:var(--border-width) solid var(--border); border-radius:var(--radius);
+  padding:12px 13px; min-width:158px; position:relative; cursor:pointer;
+  transition:border-color .15s, transform .15s, box-shadow .15s;
+}
+.node:hover{border-color:var(--accent); transform:translateY(-2px); box-shadow:0 6px 18px #00000055;}
+.node.selected{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+.node .n-type{font-family:var(--font-mono); font-size:9px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em;}
+.node .n-name{font-family:var(--font-head); font-size:12.5px; font-weight:600; margin:4px 0 8px; line-height:1.3;}
+.node .n-stats{display:flex; justify-content:space-between; gap:6px;}
+.node .n-stat{text-align:left;}
+.node .n-stat .v{font-family:var(--font-mono); font-size:13px; font-weight:600;}
+.node .n-stat .l{font-size:9px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em;}
+.node .n-break-pill{
+  margin-top:8px; display:inline-flex; align-items:center; gap:5px;
+  font-family:var(--font-mono); font-size:10.5px; padding:3px 8px; border-radius:var(--radius-pill);
+  background:var(--fail-dim); color:var(--fail); border:var(--border-width) solid var(--fail);
+}
+.node .n-break-pill.zero{background:var(--pass-dim); color:var(--pass); border-color:var(--pass);}
+.node.flow-etd{border-left:3px solid var(--etd);}
+.node.flow-otc{border-left:3px solid var(--otc);}
+.node.flow-nonotc{border-left:3px solid var(--nonotc);}
+
+.connector-col{display:flex; align-items:center; flex-direction:column; justify-content:center; min-width:52px; position:relative;}
+.connector-line{width:100%; height:2px; background:linear-gradient(90deg, var(--border) 0%, var(--accent) 50%, var(--border) 100%); position:relative; opacity:.55;}
+.connector-arrow{color:var(--text-faint); font-size:14px;}
+.split-wrap{display:flex; flex-direction:column; gap:8px; justify-content:center;}
+.lineage-stage-block{display:flex; flex-direction:column; gap:10px;}
+
+.node-detail{
+  background:var(--bg-raised); border:var(--border-width) dashed var(--border); border-radius:var(--radius);
+  padding:14px 16px; margin-top:10px; font-size:12px; color:var(--text-dim);
+}
+.node-detail .nd-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-top:8px;}
+.node-detail .nd-item .v{font-family:var(--font-mono); color:var(--text); font-size:14px; font-weight:600;}
+.node-detail .nd-item .l{font-size:10px; color:var(--text-faint); text-transform:uppercase;}
+.node-detail .nd-actions{margin-top:10px;}
+
+/* ---------- legend ---------- */
+.legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:16px; padding-top:14px; border-top:var(--border-width) solid var(--border-soft);}
+.legend-item{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--text-dim);}
+.legend-swatch{width:11px; height:11px; border-radius:3px;}
+
+/* ---------- tables ---------- */
+.table-toolbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+.input, select.input{
+  background:var(--bg-raised); border:var(--border-width) solid var(--border); color:var(--text);
+  padding:8px 11px; border-radius:var(--radius-sm); font-family:var(--font-body); font-size:12.5px;
+  min-width:140px;
+}
+.input::placeholder{color:var(--text-faint);}
+.input:focus, select.input:focus{border-color:var(--accent);}
+.btn{
+  background:var(--panel-2); border:var(--border-width) solid var(--border); color:var(--text);
+  padding:8px 13px; border-radius:var(--radius-sm); font-size:12px; font-weight:600;
+  display:inline-flex; align-items:center; gap:6px; transition:border-color .15s, color .15s;
+}
+.btn:hover{border-color:var(--accent); color:var(--accent);}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:#04181c;}
+.btn.primary:hover{color:#04181c; opacity:.9;}
+.btn.ghost{background:none;}
+.spacer{flex:1;}
+
+.table-wrap{overflow-x:auto; border:var(--border-width) solid var(--border-soft); border-radius:var(--radius);}
+table{width:100%; border-collapse:collapse; font-size:12px;}
+thead th{
+  background:var(--bg-raised); text-align:left; padding:9px 12px; font-family:var(--font-mono);
+  font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-faint);
+  border-bottom:var(--border-width) solid var(--border); white-space:nowrap; cursor:pointer; user-select:none;
+  position:sticky; top:0;
+}
+thead th:hover{color:var(--accent);}
+thead th .sort-arrow{opacity:.5; margin-left:3px;}
+tbody td{padding:9px 12px; border-bottom:var(--border-width) solid var(--border-soft); white-space:nowrap; font-family:var(--font-mono); color:var(--text-dim);}
+tbody tr{cursor:pointer; transition:background .12s;}
+tbody tr:hover{background:var(--panel-2);}
+tbody tr:last-child td{border-bottom:none;}
+.status-pill{
+  font-family:var(--font-mono); font-size:10px; padding:2px 8px; border-radius:var(--radius-pill);
+  border:1px solid; text-transform:uppercase; font-weight:600;
+}
+.status-pill.pass{color:var(--pass); border-color:var(--pass); background:var(--pass-dim);}
+.status-pill.fail{color:var(--fail); border-color:var(--fail); background:var(--fail-dim);}
+.status-pill.warn{color:var(--warn); border-color:var(--warn); background:var(--warn-dim);}
+.flow-tag{font-family:var(--font-mono); font-size:10px; padding:2px 7px; border-radius:var(--radius-sm); font-weight:600;}
+.flow-tag.ETD{color:var(--etd); background:var(--etd-dim);}
+.flow-tag.OTC{color:var(--otc); background:var(--otc-dim);}
+.flow-tag.NON-OTC{color:var(--nonotc); background:var(--nonotc-dim);}
+
+.pagination{display:flex; align-items:center; gap:10px; justify-content:flex-end; margin-top:12px; font-size:12px; color:var(--text-dim);}
+.pagination button{background:var(--panel-2); border:var(--border-width) solid var(--border); color:var(--text); padding:5px 10px; border-radius:var(--radius-sm);}
+.pagination button:disabled{opacity:.35; cursor:not-allowed;}
+
+.empty-state{padding:40px 20px; text-align:center; color:var(--text-faint); font-size:12.5px;}
+.empty-state .es-title{font-family:var(--font-head); color:var(--text-dim); font-size:14px; margin-bottom:4px;}
+
+/* ---------- stage control cards ---------- */
+.stage-ctrl-grid{display:flex; flex-direction:column; gap:14px;}
+.stage-ctrl{background:var(--panel); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius); overflow:hidden;}
+.stage-ctrl-head{
+  display:flex; align-items:center; justify-content:space-between; padding:14px 17px;
+  cursor:pointer; gap:12px; flex-wrap:wrap;
+}
+.stage-ctrl-head:hover{background:var(--panel-2);}
+.sc-title-wrap{display:flex; align-items:center; gap:10px;}
+.sc-title{font-family:var(--font-head); font-weight:600; font-size:13.5px;}
+.sc-chevron{color:var(--text-faint); transition:transform .2s; font-size:11px;}
+.stage-ctrl.open .sc-chevron{transform:rotate(90deg);}
+.sc-body{display:none; padding:0 17px 17px; border-top:var(--border-width) solid var(--border-soft);}
+.stage-ctrl.open .sc-body{display:block;}
+.sc-metric-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:12px; margin:14px 0;}
+.sc-metric{background:var(--bg-raised); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius-sm); padding:10px 12px;}
+.sc-metric .v{font-family:var(--font-mono); font-size:16px; font-weight:600;}
+.sc-metric .l{font-size:10px; color:var(--text-faint); text-transform:uppercase; margin-top:2px;}
+.sc-metric.fail .v{color:var(--fail);}
+.sc-metric.warn .v{color:var(--warn);}
+.sc-metric.pass .v{color:var(--pass);}
+.reason-chip-row{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;}
+.reason-chip{font-family:var(--font-mono); font-size:10.5px; padding:3px 9px; background:var(--fail-dim); color:var(--fail); border-radius:var(--radius-pill); border:var(--border-width) solid var(--fail); cursor:pointer;}
+.reason-chip:hover{opacity:.8;}
+
+/* ---------- modal ---------- */
+.modal-backdrop{
+  position:fixed; inset:0; background:#03060cb0; backdrop-filter:blur(3px);
+  display:none; align-items:flex-start; justify-content:center; padding:60px 20px; z-index:100; overflow-y:auto;
+}
+.modal-backdrop.open{display:flex;}
+.modal{
+  background:var(--bg-raised); border:var(--border-width) solid var(--border); border-radius:var(--radius);
+  max-width:640px; width:100%; padding:22px 24px; animation:modalin .18s ease;
+}
+@keyframes modalin{from{opacity:0; transform:translateY(-8px) scale(.98);} to{opacity:1; transform:none;}}
+.modal-head{display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:14px;}
+.modal-head h3{font-family:var(--font-head); font-size:15.5px;}
+.modal-close{background:none; border:none; color:var(--text-faint); font-size:20px; line-height:1;}
+.modal-close:hover{color:var(--text);}
+.modal-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px 18px;}
+.modal-field{border-bottom:var(--border-width) solid var(--border-soft); padding-bottom:7px;}
+.modal-field .l{font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.05em;}
+.modal-field .v{font-family:var(--font-mono); font-size:13px; margin-top:3px; word-break:break-all;}
+.modal-reason-box{margin-top:16px; background:var(--fail-dim); border:var(--border-width) solid var(--fail); border-radius:var(--radius-sm); padding:12px 14px;}
+.modal-reason-box .l{font-family:var(--font-mono); font-size:10px; color:var(--fail); text-transform:uppercase; margin-bottom:4px;}
+.modal-reason-box .v{font-size:12.5px; color:var(--text);}
+
+/* ---------- file loader ---------- */
+.loader-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:14px;}
+@media(max-width:900px){.loader-grid{grid-template-columns:1fr;}}
+.loader-card{background:var(--panel); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius); padding:16px 17px;}
+.loader-card h4{font-family:var(--font-head); font-size:13px; margin-bottom:3px;}
+.loader-card .lc-file{font-family:var(--font-mono); font-size:11px; color:var(--accent); margin-bottom:8px;}
+.loader-card p{font-size:11.5px; color:var(--text-dim); margin-bottom:12px;}
+.file-drop{
+  border:var(--border-width) dashed var(--border); border-radius:var(--radius-sm); padding:14px; text-align:center;
+  font-size:11.5px; color:var(--text-faint); position:relative;
+}
+.file-drop input[type=file]{position:absolute; inset:0; opacity:0; cursor:pointer;}
+.file-drop.loaded{border-color:var(--pass); color:var(--pass); background:var(--pass-dim);}
+.loader-actions{display:flex; gap:10px; margin:18px 0 4px; flex-wrap:wrap;}
+.code-note{
+  background:var(--bg-raised); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius-sm);
+  padding:12px 14px; font-family:var(--font-mono); font-size:11px; color:var(--text-dim);
+  margin-top:14px; line-height:1.7; white-space:pre-wrap;
+}
+
+/* ---------- settings tab ---------- */
+.field-editor-head{
+  display:grid; grid-template-columns:1fr 1fr 90px 84px 80px; gap:10px; padding:0 4px 8px;
+  font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint);
+}
+.field-row{
+  display:grid; grid-template-columns:1fr 1fr 90px 84px 80px; gap:10px; align-items:center;
+  padding:7px 4px; border-bottom:var(--border-width) solid var(--border-soft);
+}
+.field-row .input{min-width:0; width:100%;}
+.field-row .visible-toggle{display:flex; align-items:center; justify-content:center;}
+.field-row .order-btns{display:flex; gap:4px;}
+.field-row .order-btns button{background:var(--panel-2); border:var(--border-width) solid var(--border); color:var(--text-dim); width:26px; height:26px; border-radius:var(--radius-sm); font-size:11px;}
+.field-row .order-btns button:hover{color:var(--accent); border-color:var(--accent);}
+.field-row .remove-field{background:none; border:var(--border-width) solid var(--fail); color:var(--fail); border-radius:var(--radius-sm); padding:5px 9px; font-size:11px;}
+.field-row .remove-field:hover{background:var(--fail-dim);}
+.add-field-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; align-items:center;}
+
+.schema-card{background:var(--bg-raised); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius-sm); padding:14px 15px; margin-bottom:12px;}
+.schema-head{display:flex; gap:10px; align-items:center; margin-bottom:8px;}
+.schema-head .input{flex:1;}
+.schema-note-input{width:100%; background:var(--bg-raised); border:var(--border-width) solid var(--border); color:var(--text-dim); font-family:var(--font-body); font-size:11.5px; border-radius:var(--radius-sm); padding:8px 10px; resize:vertical; min-height:44px; margin-bottom:10px;}
+.chip-row{display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px;}
+.col-chip{
+  display:inline-flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px;
+  background:var(--panel-2); border:var(--border-width) solid var(--border); color:var(--text-dim); padding:4px 5px 4px 10px; border-radius:var(--radius-pill);
+}
+.col-chip .chip-remove{background:none; border:none; color:var(--text-faint); font-size:13px; line-height:1; padding:2px 4px; border-radius:50%;}
+.col-chip .chip-remove:hover{color:var(--fail); background:var(--fail-dim);}
+.add-col-row{display:flex; gap:8px;}
+.add-col-row .input{max-width:220px;}
+.remove-schema{background:none; border:var(--border-width) solid var(--fail); color:var(--fail); border-radius:var(--radius-sm); padding:6px 11px; font-size:11px; white-space:nowrap;}
+.remove-schema:hover{background:var(--fail-dim);}
+
+.settings-subhead{font-family:var(--font-head); font-weight:600; font-size:13px; margin:20px 0 10px; padding-top:16px; border-top:var(--border-width) solid var(--border-soft);}
+.notif-toggle-row{display:flex; gap:24px; flex-wrap:wrap; align-items:center; margin-bottom:6px;}
+.switch-label{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text);}
+.switch-label input{width:16px; height:16px; accent-color:var(--accent);}
+.threshold-label{font-size:12.5px; color:var(--text-dim); display:flex; align-items:center; gap:8px;}
+
+.distlist-card{background:var(--bg-raised); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius-sm); padding:11px 14px; margin-bottom:9px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px;}
+.distlist-card .dl-name{font-family:var(--font-head); font-weight:600; font-size:12.5px; margin-bottom:4px;}
+.distlist-card .dl-emails{font-family:var(--font-mono); font-size:11px; color:var(--text-dim); word-break:break-all;}
+
+.teams-card{background:var(--bg-raised); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius-sm); padding:11px 14px; margin-bottom:9px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+.teams-card .tc-name{font-family:var(--font-head); font-weight:600; font-size:12.5px;}
+.teams-card .tc-url{font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); word-break:break-all; margin-top:2px;}
+.teams-card .tc-actions{display:flex; gap:8px;}
+
+.smtp-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-bottom:6px;}
+@media(max-width:700px){.smtp-grid{grid-template-columns:1fr;}}
+.smtp-field label{display:block; font-size:10.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; margin-bottom:5px;}
+.smtp-field .input{width:100%;}
+.smtp-field.checkbox-field{display:flex; align-items:center; gap:8px; margin-top:6px;}
+.smtp-field.checkbox-field label{margin:0; text-transform:none; font-size:12.5px; color:var(--text);}
+
+.settings-note{font-size:11.5px; color:var(--text-faint); margin:8px 0 12px; line-height:1.6;}
+.notif-log{display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;}
+.notif-log-row{font-family:var(--font-mono); font-size:11px; color:var(--text-dim); padding:7px 10px; background:var(--bg-raised); border:var(--border-width) solid var(--border-soft); border-radius:var(--radius-sm); display:flex; justify-content:space-between; gap:10px;}
+.notif-log-row.ok{border-color:var(--pass);}
+.notif-log-row.err{border-color:var(--fail);}
+.notif-log-empty{font-size:11.5px; color:var(--text-faint); padding:6px 2px;}
+
+.kbd{font-family:var(--font-mono); background:var(--panel-2); border:var(--border-width) solid var(--border); border-radius:var(--radius-sm); padding:1px 5px; font-size:10.5px;}
+
+/* ---------- appearance / theme editor ---------- */
+.theme-preset-row{display:flex; gap:9px; flex-wrap:wrap;}
+.theme-preset-btn{
+  display:flex; align-items:center; gap:8px; background:var(--bg-raised); border:var(--border-width) solid var(--border);
+  border-radius:var(--radius-sm); padding:7px 12px; font-size:11.5px; color:var(--text-dim); font-weight:600;
+}
+.theme-preset-btn:hover{border-color:var(--accent); color:var(--accent);}
+.theme-preset-swatch{display:flex; border-radius:3px; overflow:hidden; width:28px; height:14px; flex-shrink:0;}
+.theme-preset-swatch span{flex:1; height:100%;}
+
+.theme-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; margin-bottom:4px;}
+.theme-field{display:flex; align-items:center; gap:10px;}
+.theme-field input[type=color]{
+  -webkit-appearance:none; appearance:none; width:34px; height:34px; border-radius:var(--radius-sm);
+  border:var(--border-width) solid var(--border); background:none; padding:0; cursor:pointer; flex-shrink:0;
+}
+.theme-field input[type=color]::-webkit-color-swatch-wrapper{padding:2px;}
+.theme-field input[type=color]::-webkit-color-swatch{border:none; border-radius:4px;}
+.theme-field-meta{display:flex; flex-direction:column; gap:2px; min-width:0;}
+.theme-field-meta .tf-label{font-size:11.5px; color:var(--text);}
+.theme-field-meta .tf-hex{font-family:var(--font-mono); font-size:10px; color:var(--text-faint);}
+.theme-field.range-field{flex-direction:column; align-items:stretch; gap:6px;}
+.theme-field.range-field .tf-row{display:flex; justify-content:space-between; font-size:11.5px; color:var(--text);}
+.theme-field.range-field .tf-row span:last-child{font-family:var(--font-mono); color:var(--text-faint);}
+.theme-field.range-field input[type=range]{width:100%; accent-color:var(--accent);}
+
+/* ---------- labels editor ---------- */
+.labels-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px;}
+.label-field label{display:block; font-size:10.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; margin-bottom:5px;}
+.label-field .input{width:100%;}
+footer.foot{margin-top:34px; padding-top:16px; border-top:var(--border-width) solid var(--border-soft); font-size:11px; color:var(--text-faint); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;}
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ============ TOP RAIL ============ -->
+  <div class="top-rail">
+    <div class="brand">
+      <div class="brand-mark">071</div>
+      <div class="brand-text">
+        <h1 id="brandTitleEl">SVL-071 Reconciliation Console</h1>
+        <div class="sub" id="brandSubtitleEl">Murex R071 &rarr; Surveillance.Trades &nbsp;&middot;&nbsp; ETD / OTC / NON-OTC</div>
+      </div>
+    </div>
+    <div class="rail-status">
+      <div class="status-chip"><span class="dot on" id="dataDot"></span><span id="dataDotLabel">Demo dataset loaded</span></div>
+      <div class="status-chip"><span class="dot" id="breachDot"></span><span id="breachLabel">&mdash;</span></div>
+      <div class="run-time" id="runClock">&mdash;</div>
+    </div>
+  </div>
+
+  <!-- ============ TABS ============ -->
+  <div class="tab-bar" role="tablist" id="tabBar">
+    <button class="tab-btn active" data-tab="overview"><span data-label="tabOverview">Overview Dashboard</span></button>
+    <button class="tab-btn" data-tab="lineage"><span data-label="tabLineage">Lineage View</span></button>
+    <button class="tab-btn" data-tab="stagecontrols"><span data-label="tabStageControls">Stage Controls</span></button>
+    <button class="tab-btn" data-tab="breaks"><span data-label="tabBreaks">Breaks / Exceptions</span> <span class="tag" id="breaksTag">0</span></button>
+    <button class="tab-btn" data-tab="drilldown"><span data-label="tabDrilldown">Drill-Down Details</span></button>
+    <button class="tab-btn" data-tab="loader"><span data-label="tabLoader">File Loader / Data Import</span></button>
+    <button class="tab-btn" data-tab="settings"><span data-label="tabSettings">Settings</span></button>
+  </div>
+
+  <!-- ============ OVERVIEW ============ -->
+  <section class="tab-panel active" id="tab-overview">
+    <div class="section-head">
+      <div>
+        <h2 data-label="titleOverview">Pipeline overview</h2>
+        <p>End-to-end volumes across the R071 &rarr; Surveillance.Trades run, all flows combined.</p>
+      </div>
+    </div>
+
+    <div class="kpi-grid" id="kpiGrid"></div>
+
+    <div class="flow-row" id="flowRow"></div>
+
+    <div class="panel">
+      <div class="panel-title">Break rate by stage</div>
+      <div class="panel-sub">Share of records that did not pass reconciliation at each checkpoint. Click a bar to jump to Stage Controls.</div>
+      <div class="rate-list" id="rateList"></div>
+    </div>
+  </section>
+
+  <!-- ============ LINEAGE ============ -->
+  <section class="tab-panel" id="tab-lineage">
+    <div class="section-head">
+      <div>
+        <h2 data-label="titleLineage">Lineage view</h2>
+        <p>Source &rarr; staging &rarr; per-flow transform &rarr; risk enrichment &rarr; publish &rarr; export. Click any block for records in/out, breaks and drop/pass counts.</p>
+      </div>
+      <div class="table-toolbar">
+        <select class="input" id="lineageFlowFilter">
+          <option value="ALL">All flows</option>
+          <option value="ETD">ETD only</option>
+          <option value="OTC">OTC only</option>
+          <option value="NON-OTC">NON-OTC only</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="lineage-scroll">
+        <div class="lineage-diagram" id="lineageDiagram"></div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--etd)"></span>ETD flow</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--otc)"></span>OTC flow</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--nonotc)"></span>NON-OTC flow</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--fail)"></span>Breaks present</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--pass)"></span>Zero breaks</div>
+      </div>
+    </div>
+
+    <div class="panel" id="nodeDetailPanel" style="display:none;"></div>
+  </section>
+
+  <!-- ============ STAGE CONTROLS ============ -->
+  <section class="tab-panel" id="tab-stagecontrols">
+    <div class="section-head">
+      <div>
+        <h2 data-label="titleStageControls">Stage controls</h2>
+        <p>Source vs. target row counts, match/unmatch/duplicate/null-lookup counts and reason codes for every reconciliation checkpoint.</p>
+      </div>
+      <select class="input" id="stageFlowFilter">
+        <option value="ALL">All flows</option>
+        <option value="ETD">ETD</option>
+        <option value="OTC">OTC</option>
+        <option value="NON-OTC">NON-OTC</option>
+      </select>
+    </div>
+    <div class="stage-ctrl-grid" id="stageCtrlGrid"></div>
+  </section>
+
+  <!-- ============ BREAKS ============ -->
+  <section class="tab-panel" id="tab-breaks">
+    <div class="section-head">
+      <div>
+        <h2 data-label="titleBreaks">Breaks &amp; exceptions</h2>
+        <p>Every record that failed to reconcile, with stage, break type and reason. Click a row for the full record.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="table-toolbar">
+        <input class="input" id="breakSearch" placeholder="Search trade ID, contract ID, RIC, ISIN&hellip;">
+        <select class="input" id="breakStageFilter"><option value="ALL">All stages</option></select>
+        <select class="input" id="breakFlowFilter">
+          <option value="ALL">All flows</option>
+          <option value="ETD">ETD</option><option value="OTC">OTC</option><option value="NON-OTC">NON-OTC</option>
+        </select>
+        <select class="input" id="breakTypeFilter"><option value="ALL">All break types</option></select>
+        <div class="spacer"></div>
+        <button class="btn" id="clearBreakFilters">Clear filters</button>
+        <button class="btn primary" id="exportBreaksBtn">Export filtered &rarr; CSV</button>
+      </div>
+      <div class="table-wrap"><table id="breaksTable"><thead></thead><tbody></tbody></table></div>
+      <div class="pagination" id="breaksPagination"></div>
+    </div>
+  </section>
+
+  <!-- ============ DRILL DOWN ============ -->
+  <section class="tab-panel" id="tab-drilldown">
+    <div class="section-head">
+      <div>
+        <h2 data-label="titleDrilldown">Drill-down details</h2>
+        <p>Search any record across the whole pipeline &mdash; source, transform, enrichment or publish &mdash; by trade ID, contract ID or RIC.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="table-toolbar">
+        <input class="input" id="drillSearch" placeholder="Trade ID / Contract ID / RIC / ISIN&hellip;" style="min-width:280px;">
+        <select class="input" id="drillStatusFilter">
+          <option value="ALL">All statuses</option>
+          <option value="PASS">Pass</option>
+          <option value="FAIL">Fail</option>
+        </select>
+        <select class="input" id="drillSourceFilter">
+          <option value="ALL">All record sets</option>
+          <option value="final">Final published records</option>
+          <option value="breaks">Break details</option>
+          <option value="lookup">Lookup failures</option>
+          <option value="risk">Risk enrichment failures</option>
+        </select>
+      </div>
+      <div id="drillResultCount" class="panel-sub"></div>
+      <div class="table-wrap"><table id="drillTable"><thead></thead><tbody></tbody></table></div>
+      <div class="pagination" id="drillPagination"></div>
+    </div>
+  </section>
+
+  <!-- ============ FILE LOADER ============ -->
+  <section class="tab-panel" id="tab-loader">
+    <div class="section-head">
+      <div>
+        <h2 data-label="titleLoader">File loader &amp; data import</h2>
+        <p>Load the CSV control-total and extract files produced by the R071 stored procedures. Column mapping assumptions are documented below each loader.</p>
+      </div>
+    </div>
+
+    <div class="loader-grid" id="loaderGrid"></div>
+
+    <div class="loader-actions">
+      <button class="btn primary" id="loadDemoBtn">Load embedded demo data</button>
+      <button class="btn" id="clearDataBtn">Clear all loaded data</button>
+    </div>
+
+    <div class="code-note" id="mappingNote"></div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="tab-panel" id="tab-settings">
+    <div class="section-head">
+      <div>
+        <h2>Settings</h2>
+        <p>Configure appearance, text labels, table fields, CSV schemas and break notifications. Nothing here is sent anywhere until you use the Test/Export actions below.</p>
+      </div>
+    </div>
+
+    <!-- Appearance / theme -->
+    <div class="panel">
+      <div class="panel-title">Appearance</div>
+      <div class="panel-sub">Every color, border and corner radius on this page is a variable &mdash; change it here and the whole console updates live. Pill-shaped badges/tags share one radius; cards and buttons share their own.</div>
+
+      <div class="theme-preset-row" id="themePresetRow"></div>
+
+      <div class="settings-subhead" style="margin-top:18px; padding-top:0; border-top:none;">Surfaces</div>
+      <div class="theme-grid" id="themeSurfaceGrid"></div>
+
+      <div class="settings-subhead">Text</div>
+      <div class="theme-grid" id="themeTextGrid"></div>
+
+      <div class="settings-subhead">Semantic (status &amp; accent)</div>
+      <div class="theme-grid" id="themeSemanticGrid"></div>
+
+      <div class="settings-subhead">Flow identity colors</div>
+      <div class="theme-grid" id="themeFlowGrid"></div>
+
+      <div class="settings-subhead">Radius &amp; borders</div>
+      <div class="theme-grid" id="themeShapeGrid"></div>
+
+      <div class="add-field-row" style="margin-top:16px;">
+        <button class="btn ghost" id="resetThemeBtn">Reset appearance to default</button>
+      </div>
+    </div>
+
+    <!-- Labels -->
+    <div class="panel">
+      <div class="panel-title">Labels</div>
+      <div class="panel-sub">Rename any heading, tab, or caption shown in the app. Leave a field empty and it falls back to its default text.</div>
+      <div class="settings-subhead" style="margin-top:0; padding-top:0; border-top:none;">Brand &amp; tabs</div>
+      <div id="labelsEditorBrand" class="labels-grid"></div>
+      <div class="settings-subhead">Section titles</div>
+      <div id="labelsEditorTitles" class="labels-grid"></div>
+      <div class="settings-subhead">Overview KPI captions</div>
+      <div id="labelsEditorKpi" class="labels-grid"></div>
+      <div class="add-field-row" style="margin-top:16px;">
+        <button class="btn ghost" id="resetLabelsBtn">Reset labels to default</button>
+      </div>
+    </div>
+
+    <!-- Field configuration: Breaks / Exceptions -->
+    <div class="panel">
+      <div class="panel-title">Breaks / Exceptions &mdash; table fields</div>
+      <div class="panel-sub">Add, rename, reorder, hide or remove any column shown in the Breaks/Exceptions table and CSV export. Field keys must match a property present in <span class="mono">break_details.csv</span> to show real data; unknown keys render blank until a matching CSV column is loaded.</div>
+      <div class="field-editor-head">
+        <span>Key</span><span>Column label</span><span>Visible</span><span>Order</span><span></span>
+      </div>
+      <div id="breakFieldEditor"></div>
+      <div class="add-field-row">
+        <input class="input" id="newBreakFieldKey" placeholder="Field key, e.g. VenueMIC">
+        <input class="input" id="newBreakFieldLabel" placeholder="Column label, e.g. Venue MIC">
+        <button class="btn" id="addBreakFieldBtn">+ Add field</button>
+        <button class="btn ghost" id="resetBreakFieldsBtn">Reset to defaults</button>
+      </div>
+    </div>
+
+    <!-- Field configuration: Drill-Down -->
+    <div class="panel">
+      <div class="panel-title">Drill-Down Details &mdash; table fields</div>
+      <div class="panel-sub">Same idea, for the cross-stage Drill-Down search table.</div>
+      <div class="field-editor-head">
+        <span>Key</span><span>Column label</span><span>Visible</span><span>Order</span><span></span>
+      </div>
+      <div id="drillFieldEditor"></div>
+      <div class="add-field-row">
+        <input class="input" id="newDrillFieldKey" placeholder="Field key, e.g. TraderID">
+        <input class="input" id="newDrillFieldLabel" placeholder="Column label, e.g. Trader ID">
+        <button class="btn" id="addDrillFieldBtn">+ Add field</button>
+        <button class="btn ghost" id="resetDrillFieldsBtn">Reset to defaults</button>
+      </div>
+    </div>
+
+    <!-- File Loader schema configuration -->
+    <div class="panel">
+      <div class="panel-title">File Loader / Data Import &mdash; CSV schemas</div>
+      <div class="panel-sub">Edit the expected file name, description and column list for each CSV the File Loader tab accepts. Add a new schema to open an extra upload slot for a file of your own, or remove one you don't use.</div>
+      <div id="csvSchemaEditor"></div>
+      <div class="add-field-row">
+        <button class="btn" id="addSchemaBtn">+ Add CSV schema</button>
+        <button class="btn ghost" id="resetSchemasBtn">Reset to defaults</button>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="panel">
+      <div class="panel-title">Break notifications</div>
+      <div class="panel-sub">Choose who gets notified when breaks are detected, and how. Sending is triggered automatically after data loads if the break rate crosses the threshold below, or on demand with the Test buttons.</div>
+
+      <div class="notif-toggle-row">
+        <label class="switch-label"><input type="checkbox" id="notifEnabled"> Enable break notifications</label>
+        <label class="threshold-label">Notify when break rate exceeds
+          <input class="input" id="notifThreshold" type="number" min="0" max="100" step="0.1" style="width:80px; display:inline-block;"> %
+        </label>
+      </div>
+
+      <div class="settings-subhead">Distribution lists</div>
+      <div id="distListEditor"></div>
+      <div class="add-field-row">
+        <input class="input" id="newDistListName" placeholder="List name, e.g. Desk Heads">
+        <input class="input" id="newDistListEmails" placeholder="Emails, comma-separated" style="min-width:260px;">
+        <button class="btn" id="addDistListBtn">+ Add distribution list</button>
+      </div>
+
+      <div class="settings-subhead">SMTP configuration</div>
+      <div class="smtp-grid" id="smtpForm"></div>
+      <p class="settings-note">Browsers cannot speak SMTP directly. Configure a relay endpoint here &mdash; a small internal API/serverless function that accepts a JSON payload and sends it on via your SMTP host &mdash; and the console will POST to it. Without a relay endpoint, "Send test email" will show you the exact payload instead of sending it.</p>
+      <button class="btn" id="testEmailBtn">Send test email</button>
+
+      <div class="settings-subhead">MS Teams webhooks</div>
+      <div id="teamsEditor"></div>
+      <div class="add-field-row">
+        <input class="input" id="newTeamsName" placeholder="Channel name, e.g. Surveillance Ops">
+        <input class="input" id="newTeamsUrl" placeholder="Incoming webhook URL" style="min-width:320px;">
+        <button class="btn" id="addTeamsBtn">+ Add webhook</button>
+      </div>
+      <p class="settings-note">Teams incoming webhooks are called directly from the browser. Some tenants block cross-origin calls to <span class="mono">webhook.office.com</span>; if a test fails silently, proxy it through your relay endpoint instead.</p>
+
+      <div class="settings-subhead">Notification log</div>
+      <div id="notifLog" class="notif-log"></div>
+    </div>
+
+    <!-- Import / export settings -->
+    <div class="panel">
+      <div class="panel-title">Import / export settings</div>
+      <div class="panel-sub">Export every setting on this page &mdash; field configuration, CSV schemas, distribution lists, SMTP and Teams config &mdash; as a single JSON file, and re-import it later or on another machine. Loaded CSV data is never included.</div>
+      <div class="loader-actions" style="margin:4px 0 0;">
+        <button class="btn primary" id="exportSettingsBtn">Export settings &rarr; JSON</button>
+        <div class="file-drop" style="max-width:260px;">
+          Import settings JSON&hellip;
+          <input type="file" accept=".json,application/json" id="importSettingsInput">
+        </div>
+      </div>
+      <div class="code-note" id="settingsImportStatus" style="display:none;"></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>SVL-071 Reconciliation Console &middot; frontend-only, reads CSVs exported by SQL Server stored procedures &middot; no data leaves the browser</span>
+    <span id="footStamp"></span>
+  </footer>
+</div>
+
+<!-- ============ RECORD MODAL ============ -->
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">Record detail</h3>
+      <button class="modal-close" id="modalClose">&times;</button>
+    </div>
+    <div class="modal-grid" id="modalGrid"></div>
+    <div class="modal-reason-box" id="modalReasonBox" style="display:none;">
+      <div class="l">Failure reason</div>
+      <div class="v" id="modalReasonText"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   SVL-071 RECONCILIATION CONSOLE
+   Vanilla HTML/CSS/JS SPA. No build step, no framework: this app is
+   a single static file that a data engineer can open directly, or
+   host on any static file server / share drive.
+
+   ----------------------------------------------------------------
+   WHERE REAL SQL-GENERATED CSVs PLUG IN
+   ----------------------------------------------------------------
+   Every stored procedure listed in the brief is expected to EXPORT
+   (via bcp / SSIS / Export-CSV) one of the 7 CSV shapes defined in
+   CSV_SCHEMAS below. Point the "File Loader" tab's <input type=file>
+   controls at those exports, or replace the SAMPLE_CSV strings with
+   your own text and call loadAllFromSample() to demo without files.
+
+     source_staging_summary.csv     <- control totals for
+                                        R071_DW_TRADE + R071_DW_TRADE_MUFGBK
+                                        -> Transform.vwTradeStaging
+     staging_transform_summary.csv  <- control totals for
+                                        #TradeStaging -> Transform.Surveillance_Trades
+                                        (per flow: ETD / OTC / NON-OTC)
+     transform_publish_summary.csv  <- control totals for
+                                        Transform.Surveillance_Trades -> Surveillance.Trades
+     break_details.csv              <- row-level break/exception extract
+     lookup_failures.csv            <- rows that failed a reference lookup
+                                        (Book, BookingAccount, Organisation,
+                                        StaticRICMapping, SalesCreditHierarchy, etc.)
+     risk_enrichment_failures.csv   <- rows that failed Risk Enrichment
+                                        (SensitivityFact / Curve / TradeLegDaily / PVHub)
+     final_records.csv              <- Surveillance.Trades export split by flow
+                                        (ETD.csv / OTC.csv / NON-OTC.csv concatenated,
+                                        distinguished by the Flow column)
+   ================================================================ */
+
+/* ---------------------------------------------------------------
+   1. CSV SCHEMA DOCUMENTATION (assumptions, stated per the brief)
+   --------------------------------------------------------------- */
+const DEFAULT_CSV_SCHEMAS = {
+  source_staging_summary: {
+    file: 'source_staging_summary.csv',
+    columns: ['Flow','Stage','SourceObject','InputRows','OutputRows','BreakCount','PassCount','DropCount','DupCount','NullLookupCount'],
+    note: 'One row per flow. Stage is fixed to "Source -> Staging". SourceObject documents which of R071_DW_TRADE / R071_DW_TRADE_MUFGBK / vwTradeStaging the row totals describe.'
+  },
+  staging_transform_summary: {
+    file: 'staging_transform_summary.csv',
+    columns: ['Flow','Stage','InputRows','OutputRows','BreakCount','PassCount','DropCount','DupCount','NullLookupCount'],
+    note: 'One row per flow (ETD/OTC/NON-OTC). Stage is fixed to "Staging -> Transform". Reflects the divergent lookup sets each flow runs against #TradeStaging.'
+  },
+  transform_publish_summary: {
+    file: 'transform_publish_summary.csv',
+    columns: ['Flow','Stage','InputRows','OutputRows','BreakCount','PassCount','DropCount','DupCount','NullLookupCount'],
+    note: 'One row per flow. Stage is fixed to "Transform -> Publish", i.e. Transform.Surveillance_Trades -> Surveillance.Trades incl. vwLatestRefinitivRIC lookup.'
+  },
+  break_details: {
+    file: 'break_details.csv',
+    columns: ['TradeID','ContractID','Flow','Stage','BreakType','Book','Currency','Notional','Price','TradeDate','RIC','ISIN','LEI','Counterparty','SalesName','CurveName','IR01','IssuerPermid','QuotePermid','Reason','Status'],
+    note: 'BreakType is one of Dropped / Delayed / Duplicated / FailedLookup. Status is Fail for every row in this file by definition.'
+  },
+  lookup_failures: {
+    file: 'lookup_failures.csv',
+    columns: ['TradeID','ContractID','Flow','LookupType','Reason','Status'],
+    note: 'LookupType names the failing reference table, e.g. Global.Book, Surveillance.StaticRICMapping, Sales.SalesCreditHierarchy, Global.TradeTypology.'
+  },
+  risk_enrichment_failures: {
+    file: 'risk_enrichment_failures.csv',
+    columns: ['TradeID','ContractID','Flow','Field','Reason','Status'],
+    note: 'Field is one of IR01 / CurveName / Leg1_PV / Leg2_PV / Leg1_CurrentRate / Leg2_CurrentRate. Sourced from SensitivityFact, Curve, TradeLegDaily, PVHub.'
+  },
+  final_records: {
+    file: 'final_records.csv',
+    columns: ['TradeID','ContractID','Flow','Book','Currency','Notional','Price','TradeDate','RIC','ISIN','LEI','Counterparty','SalesName','CurveName','IR01','IssuerPermid','QuotePermid','Status'],
+    note: 'Union of the three Surveillance.Trades exports (ETD.csv / OTC.csv / NON-OTC.csv), distinguished by Flow.'
+  }
+};
+
+/* ---------------------------------------------------------------
+   2. EMBEDDED SAMPLE CSV DATA (demo mode — replace via File Loader)
+   --------------------------------------------------------------- */
+const SAMPLE_CSV = {};
+
+SAMPLE_CSV.source_staging_summary =
+`Flow,Stage,SourceObject,InputRows,OutputRows,BreakCount,PassCount,DropCount,DupCount,NullLookupCount
+ETD,Source -> Staging,R071_DW_TRADE + R071_DW_TRADE_MUFGBK -> vwTradeStaging,18420,18190,230,18190,140,58,32
+OTC,Source -> Staging,R071_DW_TRADE + R071_DW_TRADE_MUFGBK -> vwTradeStaging,24110,23760,350,23760,201,90,59
+NON-OTC,Source -> Staging,R071_DW_TRADE + R071_DW_TRADE_MUFGBK -> vwTradeStaging,9870,9701,169,9701,102,41,26`;
+
+SAMPLE_CSV.staging_transform_summary =
+`Flow,Stage,InputRows,OutputRows,BreakCount,PassCount,DropCount,DupCount,NullLookupCount
+ETD,Staging -> Transform,18190,17958,232,17958,88,19,125
+OTC,Staging -> Transform,23760,23346,414,23346,140,37,237
+NON-OTC,Staging -> Transform,9701,9512,189,9512,61,15,113`;
+
+SAMPLE_CSV.transform_publish_summary =
+`Flow,Stage,InputRows,OutputRows,BreakCount,PassCount,DropCount,DupCount,NullLookupCount
+ETD,Transform -> Publish,17958,17864,94,17864,40,6,48
+OTC,Transform -> Publish,23346,23102,244,23102,101,22,121
+NON-OTC,Transform -> Publish,9512,9455,57,9455,22,4,31`;
+
+function pad(n,w){ n=String(n); while(n.length<w) n='0'+n; return n; }
+function genTradeID(flow,i){ const p = flow==='ETD'?'ETD':flow==='OTC'?'OTC':'NOT'; return p+'-'+pad(i,6); }
+const BOOKS=['LON-RATES-01','LON-CRED-04','NY-EQD-02','TKY-FX-11','LON-COMM-07','SG-RATES-03'];
+const CCY=['USD','EUR','GBP','JPY','AUD','CHF'];
+const COUNTERPARTIES=['GOLDMAN SACHS INTL','BARCLAYS BANK PLC','JPMORGAN CHASE NA','BNP PARIBAS SA','DEUTSCHE BANK AG','CITIBANK NA LONDON'];
+const SALES=['R. NAKAMURA','J. FERREIRA','A. SINGH','K. OBRIEN','M. DUBOIS','L. CHEN'];
+const CURVES=['USD-SOFR-OIS','EUR-ESTR-OIS','GBP-SONIA-OIS','JPY-TONA-OIS','USD-LIBOR-3M-LEGACY'];
+const REASONS_LOOKUP=[
+  ['Global.Book','No active booking hierarchy mapped for book code as of trade date'],
+  ['Global.BookingAccount','Booking account closed prior to trade settlement date'],
+  ['Global.Organisation','Organisation ID not present in Global.Organisation snapshot'],
+  ['Global.TradeTypology','Typology code unmapped for ETD product on this exchange'],
+  ['Global.Strategy','Strategy ID missing from Global.Strategy master'],
+  ['Surveillance.StaticRICMapping','No static RIC mapping found for ISIN / exchange combination'],
+  ['Sales.SalesCreditHierarchy','Sales credit hierarchy incomplete for sales desk as of trade date'],
+  ['Global.SecurityMarketData','Security market data row not published for trade date']
+];
+const REASONS_RISK=[
+  ['IR01','SensitivityFact row missing for curve tenor bucket'],
+  ['CurveName','Curve ID unmapped in Global.Curve master'],
+  ['Leg1_PV','PVHub REP_Winnings extract did not include this trade ID'],
+  ['Leg2_PV','TradeLegDaily leg 2 record not found for trade date'],
+  ['Leg1_CurrentRate','Curve rate snapshot stale beyond tolerance for trade date']
+];
+const BREAK_TYPES=['Dropped','Delayed','Duplicated','FailedLookup'];
+const BREAK_REASONS={
+  Dropped:'Record present in source but absent from #TradeStaging after merge',
+  Delayed:'Record staged after control-total cut-off; picked up in next intraday run',
+  Duplicated:'Duplicate M_CONTRACT / M_TP_GID pair detected across R071_DW_TRADE and MUFGBK',
+  FailedLookup:'One or more reference lookups returned no match; see Lookup Failures'
+};
+
+function randPick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function randNotional(){ return (Math.random()*48_000_000+250_000).toFixed(2); }
+function randPrice(){ return (Math.random()*180+80).toFixed(4); }
+function randDate(){ const d=new Date(2026,6,Math.floor(Math.random()*31)+1); return d.toISOString().slice(0,10); }
+function randIR01(){ return (Math.random()*40000-20000).toFixed(2); }
+
+function buildBreakDetailsCSV(){
+  const rows=['TradeID,ContractID,Flow,Stage,BreakType,Book,Currency,Notional,Price,TradeDate,RIC,ISIN,LEI,Counterparty,SalesName,CurveName,IR01,IssuerPermid,QuotePermid,Reason,Status'];
+  const flows=[['ETD',44],['OTC',61],['NON-OTC',27]];
+  const stages=['Source -> Staging','Staging -> Transform','Transform -> Publish'];
+  let i=1;
+  flows.forEach(([flow,count])=>{
+    for(let n=0;n<count;n++){
+      const stage=randPick(stages);
+      const bt=randPick(BREAK_TYPES);
+      const id='BRK-'+flow.replace('-','')+'-'+pad(i,5); i++;
+      rows.push([
+        genTradeID(flow,1000+n),
+        'CT-'+pad(200000+n*7+i,7),
+        flow, stage, bt,
+        randPick(BOOKS), randPick(CCY), randNotional(), randPrice(), randDate(),
+        'RIC'+pad(n,4)+'.'+ (flow==='ETD'?'L':'N'),
+        'US'+pad(30000000+n,9)+'0',
+        '5493'+pad(100000+n,10),
+        randPick(COUNTERPARTIES), randPick(SALES), randPick(CURVES), randIR01(),
+        'PMID'+pad(4000+n,6), 'QPMID'+pad(7000+n,6),
+        BREAK_REASONS[bt].replace(/,/g,';'),
+        'Fail'
+      ].join(','));
+    }
+  });
+  return rows.join('\n');
+}
+
+function buildLookupFailuresCSV(){
+  const rows=['TradeID,ContractID,Flow,LookupType,Reason,Status'];
+  const flows=[['ETD',33],['OTC',52],['NON-OTC',21]];
+  let i=1;
+  flows.forEach(([flow,count])=>{
+    for(let n=0;n<count;n++){
+      const [lt,reason]=randPick(REASONS_LOOKUP);
+      rows.push([genTradeID(flow,2000+n),'CT-'+pad(300000+n*3+i,7),flow,lt,reason.replace(/,/g,';'),'Fail'].join(',')); i++;
+    }
+  });
+  return rows.join('\n');
+}
+
+function buildRiskFailuresCSV(){
+  const rows=['TradeID,ContractID,Flow,Field,Reason,Status'];
+  // Risk enrichment applies mainly to OTC book per PVHub / SensitivityFact scope, plus a handful of NON-OTC.
+  const flows=[['OTC',37],['NON-OTC',9]];
+  let i=1;
+  flows.forEach(([flow,count])=>{
+    for(let n=0;n<count;n++){
+      const [f,reason]=randPick(REASONS_RISK);
+      rows.push([genTradeID(flow,3000+n),'CT-'+pad(400000+n*5+i,7),flow,f,reason.replace(/,/g,';'),'Fail'].join(',')); i++;
+    }
+  });
+  return rows.join('\n');
+}
+
+function buildFinalRecordsCSV(){
+  const rows=['TradeID,ContractID,Flow,Book,Currency,Notional,Price,TradeDate,RIC,ISIN,LEI,Counterparty,SalesName,CurveName,IR01,IssuerPermid,QuotePermid,Status'];
+  const flows=[['ETD',180],['OTC',230],['NON-OTC',95]];
+  flows.forEach(([flow,count])=>{
+    for(let n=0;n<count;n++){
+      rows.push([
+        genTradeID(flow,n), 'CT-'+pad(100000+n,7), flow,
+        randPick(BOOKS), randPick(CCY), randNotional(), randPrice(), randDate(),
+        'RIC'+pad(n,4)+'.'+(flow==='ETD'?'L':'N'), 'US'+pad(30000000+n,9)+'0',
+        '5493'+pad(100000+n,10), randPick(COUNTERPARTIES), randPick(SALES), randPick(CURVES),
+        randIR01(), 'PMID'+pad(4000+n,6), 'QPMID'+pad(7000+n,6), 'Pass'
+      ].join(','));
+    }
+  });
+  return rows.join('\n');
+}
+
+SAMPLE_CSV.break_details = buildBreakDetailsCSV();
+SAMPLE_CSV.lookup_failures = buildLookupFailuresCSV();
+SAMPLE_CSV.risk_enrichment_failures = buildRiskFailuresCSV();
+SAMPLE_CSV.final_records = buildFinalRecordsCSV();
+
+/* ---------------------------------------------------------------
+   3. CSV PARSER (handles quoted fields + embedded commas)
+   --------------------------------------------------------------- */
+function parseCSV(text){
+  const lines = text.replace(/\r\n/g,'\n').split('\n').filter(l=>l.length>0);
+  if(!lines.length) return [];
+  const headers = splitCSVLine(lines[0]);
+  const out = [];
+  for(let i=1;i<lines.length;i++){
+    const cells = splitCSVLine(lines[i]);
+    if(cells.length===1 && cells[0]==='') continue;
+    const row = {};
+    headers.forEach((h,idx)=>{ row[h.trim()] = (cells[idx]!==undefined ? cells[idx].trim() : ''); });
+    out.push(row);
+  }
+  return out;
+}
+function splitCSVLine(line){
+  const out=[]; let cur=''; let inQuotes=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(inQuotes){
+      if(c==='"'){ if(line[i+1]==='"'){cur+='"'; i++;} else {inQuotes=false;} }
+      else cur+=c;
+    } else {
+      if(c==='"') inQuotes=true;
+      else if(c===','){ out.push(cur); cur=''; }
+      else cur+=c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+function toNum(v){ const n = parseFloat(String(v).replace(/,/g,'')); return isNaN(n)?0:n; }
+
+/* ---------------------------------------------------------------
+   3b. CONFIGURABLE FIELD DEFAULTS (Settings tab edits copies of these)
+   --------------------------------------------------------------- */
+function cloneDeep(obj){ return JSON.parse(JSON.stringify(obj)); }
+
+const DEFAULT_BREAK_FIELDS = [
+  {key:'TradeID', label:'Trade ID', visible:true}, {key:'ContractID', label:'Contract ID', visible:true},
+  {key:'Flow', label:'Flow', visible:true}, {key:'Stage', label:'Stage', visible:true},
+  {key:'BreakType', label:'Break type', visible:true}, {key:'Book', label:'Book', visible:true},
+  {key:'Currency', label:'Ccy', visible:true}, {key:'Notional', label:'Notional', visible:true},
+  {key:'RIC', label:'RIC', visible:true}, {key:'Counterparty', label:'Counterparty', visible:true},
+  {key:'Reason', label:'Reason', visible:true}
+];
+const DEFAULT_DRILL_FIELDS = [
+  {key:'TradeID', label:'Trade ID', visible:true}, {key:'ContractID', label:'Contract ID', visible:true},
+  {key:'Flow', label:'Flow', visible:true}, {key:'__src', label:'Record set', visible:true},
+  {key:'Stage', label:'Stage', visible:true}, {key:'Status', label:'Status', visible:true},
+  {key:'Book', label:'Book', visible:true}, {key:'Notional', label:'Notional', visible:true},
+  {key:'RIC', label:'RIC', visible:true}
+];
+const DEFAULT_NOTIFICATIONS = {
+  enabled: false,
+  breakRateThreshold: 3,
+  distributionLists: [
+    {id:'dl-1', name:'Reconciliation Ops', emails:['recon-ops@yourbank.example','surveillance-duty@yourbank.example']}
+  ],
+  smtp: { host:'smtp.yourbank.example', port:587, username:'', password:'', fromAddress:'svl071-alerts@yourbank.example', useTLS:true, relayEndpoint:'' },
+  teams: { webhooks: [] }
+};
+
+let notifIdCounter = 1;
+
+/* ---------------------------------------------------------------
+   3c. APPEARANCE (THEME) TOKENS + LABEL DEFAULTS
+   --------------------------------------------------------------- */
+const THEME_TOKEN_DEFS = [
+  {key:'bg', cssVar:'--bg', label:'Page background', group:'surface', type:'color'},
+  {key:'bgRaised', cssVar:'--bg-raised', label:'Raised surface', group:'surface', type:'color'},
+  {key:'panel', cssVar:'--panel', label:'Panel / card', group:'surface', type:'color'},
+  {key:'border', cssVar:'--border', label:'Border', group:'surface', type:'color'},
+  {key:'borderSoft', cssVar:'--border-soft', label:'Soft border', group:'surface', type:'color'},
+  {key:'text', cssVar:'--text', label:'Primary text', group:'text', type:'color'},
+  {key:'textDim', cssVar:'--text-dim', label:'Secondary text', group:'text', type:'color'},
+  {key:'textFaint', cssVar:'--text-faint', label:'Faint / caption text', group:'text', type:'color'},
+  {key:'accent', cssVar:'--accent', label:'Accent / links', group:'semantic', type:'color'},
+  {key:'pass', cssVar:'--pass', label:'Pass / healthy', group:'semantic', type:'color'},
+  {key:'warn', cssVar:'--warn', label:'Warning', group:'semantic', type:'color'},
+  {key:'fail', cssVar:'--fail', label:'Fail / breach', group:'semantic', type:'color'},
+  {key:'etd', cssVar:'--etd', label:'ETD flow', group:'flow', type:'color'},
+  {key:'otc', cssVar:'--otc', label:'OTC flow', group:'flow', type:'color'},
+  {key:'nonotc', cssVar:'--nonotc', label:'NON-OTC flow', group:'flow', type:'color'},
+  {key:'radius', cssVar:'--radius', label:'Card / panel radius', group:'shape', type:'range', min:0, max:22, step:1, unit:'px'},
+  {key:'radiusSm', cssVar:'--radius-sm', label:'Button / input radius', group:'shape', type:'range', min:0, max:18, step:1, unit:'px'},
+  {key:'radiusPill', cssVar:'--radius-pill', label:'Pill / badge radius', group:'shape', type:'range', min:0, max:30, step:1, unit:'px'},
+  {key:'borderWidth', cssVar:'--border-width', label:'Border width', group:'shape', type:'range', min:0, max:4, step:1, unit:'px'}
+];
+
+const DEFAULT_THEME = {
+  bg:'#0a0f1a', bgRaised:'#0e1524', panel:'#121a2c', border:'#22304a', borderSoft:'#1a2439',
+  text:'#dbe4f3', textDim:'#8a97b3', textFaint:'#566280',
+  accent:'#29d3e0', pass:'#3ddc97', warn:'#f2b84b', fail:'#f2637a',
+  etd:'#9d8cf7', otc:'#29d3e0', nonotc:'#f2955b',
+  radius:6, radiusSm:6, radiusPill:20, borderWidth:1
+};
+
+const THEME_PRESETS = [
+  { name:'Ink Navy (default)', theme: DEFAULT_THEME },
+  { name:'Slate Light', theme:{
+      bg:'#eef1f6', bgRaised:'#ffffff', panel:'#ffffff', border:'#d6dce6', borderSoft:'#e4e8f0',
+      text:'#141b2c', textDim:'#4c5773', textFaint:'#8891a8',
+      accent:'#0f8fa3', pass:'#1f9d68', warn:'#b8790f', fail:'#c93f57',
+      etd:'#6a54d8', otc:'#0f8fa3', nonotc:'#c9691f',
+      radius:8, radiusSm:6, radiusPill:20, borderWidth:1
+  }},
+  { name:'Midnight Violet', theme:{
+      bg:'#0c0a17', bgRaised:'#120f21', panel:'#171330', border:'#2e2657', borderSoft:'#221c45',
+      text:'#e8e2fb', textDim:'#a396c9', textFaint:'#665a8f',
+      accent:'#c88bff', pass:'#3ddc97', warn:'#f2b84b', fail:'#ff6a8a',
+      etd:'#9d8cf7', otc:'#c88bff', nonotc:'#f2955b',
+      radius:10, radiusSm:8, radiusPill:24, borderWidth:1
+  }},
+  { name:'Terminal Green', theme:{
+      bg:'#050806', bgRaised:'#0a0f0b', panel:'#0d130f', border:'#1e3324', borderSoft:'#152418',
+      text:'#c9f7d9', textDim:'#7fb894', textFaint:'#4a7058',
+      accent:'#39ff8a', pass:'#39ff8a', warn:'#e8d34a', fail:'#ff5a5a',
+      etd:'#6ad6ff', otc:'#39ff8a', nonotc:'#e8a54a',
+      radius:2, radiusSm:2, radiusPill:2, borderWidth:1
+  }}
+];
+
+const DEFAULT_LABELS = {
+  brandTitle: 'SVL-071 Reconciliation Console',
+  brandSubtitle: 'Murex R071 \u2192 Surveillance.Trades \u00a0\u00b7\u00a0 ETD / OTC / NON-OTC',
+  tabOverview: 'Overview Dashboard', tabLineage: 'Lineage View', tabStageControls: 'Stage Controls',
+  tabBreaks: 'Breaks / Exceptions', tabDrilldown: 'Drill-Down Details', tabLoader: 'File Loader / Data Import',
+  tabSettings: 'Settings',
+  titleOverview: 'Pipeline overview', titleLineage: 'Lineage view', titleStageControls: 'Stage controls',
+  titleBreaks: 'Breaks & exceptions', titleDrilldown: 'Drill-down details', titleLoader: 'File loader & data import',
+  kpi1: 'Total source records', kpi2: 'Total staged records', kpi3: 'Total transformed',
+  kpi4: 'Total published', kpi5: 'Total breaks', kpi6: 'Total matched'
+};
+
+/* ---------------------------------------------------------------
+   4. APPLICATION STATE
+   --------------------------------------------------------------- */
+const STATE = {
+  data: { source_staging_summary:[], staging_transform_summary:[], transform_publish_summary:[], break_details:[], lookup_failures:[], risk_enrichment_failures:[], final_records:[] },
+  loadedFiles: {},
+  lineageFlowFilter: 'ALL',
+  stageFlowFilter: 'ALL',
+  selectedNode: null,
+  breaks: { search:'', stage:'ALL', flow:'ALL', type:'ALL', sortKey:'TradeID', sortDir:1, page:1, pageSize:12 },
+  drill: { search:'', status:'ALL', source:'ALL', sortKey:'TradeID', sortDir:1, page:1, pageSize:12 },
+  config: {
+    breakFields: cloneDeep(DEFAULT_BREAK_FIELDS),
+    drillFields: cloneDeep(DEFAULT_DRILL_FIELDS),
+    csvSchemas: cloneDeep(DEFAULT_CSV_SCHEMAS),
+    notifications: cloneDeep(DEFAULT_NOTIFICATIONS),
+    theme: cloneDeep(DEFAULT_THEME),
+    labels: cloneDeep(DEFAULT_LABELS)
+  },
+  notifLog: []
+};
+
+const FLOWS = ['ETD','OTC','NON-OTC'];
+const FLOW_COLOR = { 'ETD':'var(--etd)', 'OTC':'var(--otc)', 'NON-OTC':'var(--nonotc)' };
+const FLOW_CLASS = { 'ETD':'flow-etd', 'OTC':'flow-otc', 'NON-OTC':'flow-nonotc' };
+const STAGES_ORDER = ['Source -> Staging','Staging -> Transform','Transform -> Publish'];
+
+function loadAllFromSample(){
+  Object.keys(SAMPLE_CSV).forEach(key=>{
+    STATE.data[key] = parseCSV(SAMPLE_CSV[key]);
+    const schema = STATE.config.csvSchemas[key];
+    STATE.loadedFiles[key] = (schema ? schema.file : key+'.csv') + ' (embedded demo data)';
+  });
+  finishLoad('Demo dataset loaded');
+}
+
+function clearAllData(){
+  Object.keys(STATE.data).forEach(k=> STATE.data[k]=[]);
+  STATE.loadedFiles = {};
+  finishLoad('No data loaded', true);
+}
+
+function finishLoad(label, isEmpty){
+  document.getElementById('dataDotLabel').textContent = label;
+  document.getElementById('dataDot').className = 'dot ' + (isEmpty ? 'off':'on');
+  renderAll();
+  if(!isEmpty) maybeSendBreakNotifications();
+}
+
+/* ---------------------------------------------------------------
+   5. AGGREGATION HELPERS
+   --------------------------------------------------------------- */
+function sumBy(rows, field){ return rows.reduce((a,r)=> a + toNum(r[field]), 0); }
+
+function stageSummaryRows(){
+  return [
+    ...STATE.data.source_staging_summary,
+    ...STATE.data.staging_transform_summary,
+    ...STATE.data.transform_publish_summary
+  ];
+}
+function stageRowsFor(stage, flow){
+  return stageSummaryRows().filter(r => r.Stage===stage && (flow==='ALL' || r.Flow===flow));
+}
+function totalsForStage(stage, flow){
+  const rows = stageRowsFor(stage, flow);
+  return {
+    input: sumBy(rows,'InputRows'), output: sumBy(rows,'OutputRows'), breaks: sumBy(rows,'BreakCount'),
+    pass: sumBy(rows,'PassCount'), drop: sumBy(rows,'DropCount'), dup: sumBy(rows,'DupCount'), nullLookup: sumBy(rows,'NullLookupCount')
+  };
+}
+function totalsForFlow(flow){
+  let t = {input:0,output:0,breaks:0,pass:0};
+  const first = totalsForStage(STAGES_ORDER[0], flow);
+  const last = totalsForStage(STAGES_ORDER[STAGES_ORDER.length-1], flow);
+  t.input = first.input; t.output = last.output;
+  STAGES_ORDER.forEach(s=>{ const x=totalsForStage(s,flow); t.breaks += x.breaks; });
+  t.pass = last.pass;
+  return t;
+}
+function overallTotals(){
+  const src = totalsForStage(STAGES_ORDER[0],'ALL');
+  const stg = totalsForStage(STAGES_ORDER[1],'ALL');
+  const pub = totalsForStage(STAGES_ORDER[2],'ALL');
+  const totalBreaks = src.breaks + stg.breaks + pub.breaks;
+  return { totalSource: src.input, totalStaged: src.output, totalTransformed: stg.output, totalPublished: pub.output, totalBreaks, totalMatched: pub.output };
+}
+
+/* ---------------------------------------------------------------
+   6. RENDER: OVERVIEW
+   --------------------------------------------------------------- */
+function renderOverview(){
+  const t = overallTotals();
+  const L = STATE.config.labels;
+  const breakRate = t.totalSource ? ((t.totalBreaks / t.totalSource) * 100).toFixed(2) : '0.00';
+  const kpis = [
+    {label:L.kpi1||DEFAULT_LABELS.kpi1, value: t.totalSource.toLocaleString(), sub:'R071_DW_TRADE + MUFGBK', cls:''},
+    {label:L.kpi2||DEFAULT_LABELS.kpi2, value: t.totalStaged.toLocaleString(), sub:'Transform.vwTradeStaging', cls:''},
+    {label:L.kpi3||DEFAULT_LABELS.kpi3, value: t.totalTransformed.toLocaleString(), sub:'Transform.Surveillance_Trades', cls:''},
+    {label:L.kpi4||DEFAULT_LABELS.kpi4, value: t.totalPublished.toLocaleString(), sub:'Surveillance.Trades', cls:''},
+    {label:L.kpi5||DEFAULT_LABELS.kpi5, value: t.totalBreaks.toLocaleString(), sub: breakRate+'% of source volume', cls:'fail'},
+    {label:L.kpi6||DEFAULT_LABELS.kpi6, value: t.totalMatched.toLocaleString(), sub:'Fully reconciled to publish', cls:'pass'}
+  ];
+  document.getElementById('kpiGrid').innerHTML = kpis.map(k=>`
+    <div class="kpi ${k.cls}">
+      <div class="k-label">${k.label}</div>
+      <div class="k-value">${k.value}</div>
+      <div class="k-sub">${k.sub}</div>
+    </div>`).join('');
+
+  document.getElementById('flowRow').innerHTML = FLOWS.map(flow=>{
+    const ft = totalsForFlow(flow);
+    const rate = ft.input ? (ft.breaks/ft.input*100) : 0;
+    const status = rate < 1.5 ? 'pass' : rate < 3 ? 'warn' : 'fail';
+    const statusLabel = status==='pass'?'Healthy':status==='warn'?'Elevated breaks':'Breach';
+    const passPct = ft.input ? Math.round((ft.output/ft.input)*100) : 0;
+    return `
+    <div class="flow-card">
+      <div class="fc-head">
+        <div class="fc-title"><span class="flow-swatch" style="background:${FLOW_COLOR[flow]}"></span>${flow}</div>
+        <span class="badge ${status}">${statusLabel}</span>
+      </div>
+      <div class="fc-metrics">
+        <div class="fc-metric"><div class="m-val">${ft.input.toLocaleString()}</div><div class="m-lbl">In</div></div>
+        <div class="fc-metric"><div class="m-val">${ft.output.toLocaleString()}</div><div class="m-lbl">Published</div></div>
+        <div class="fc-metric"><div class="m-val" style="color:var(--fail)">${ft.breaks.toLocaleString()}</div><div class="m-lbl">Breaks</div></div>
+        <div class="fc-metric"><div class="m-val">${rate.toFixed(2)}%</div><div class="m-lbl">Break rate</div></div>
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width:${passPct}%; background:${FLOW_COLOR[flow]}"></div></div>
+    </div>`;
+  }).join('');
+
+  const rateRows = [];
+  STAGES_ORDER.forEach(stage=>{
+    const s = totalsForStage(stage,'ALL');
+    const rate = s.input ? (s.breaks/s.input*100) : 0;
+    rateRows.push({stage, rate, breaks:s.breaks, input:s.input});
+  });
+  const maxRate = Math.max(...rateRows.map(r=>r.rate), 1);
+  document.getElementById('rateList').innerHTML = rateRows.map(r=>{
+    const color = r.rate<1.5?'var(--pass)':r.rate<3?'var(--warn)':'var(--fail)';
+    return `
+    <div class="rate-row" data-jump-stage="${r.stage}" style="cursor:pointer">
+      <div class="r-label">${r.stage}</div>
+      <div class="progress-track"><div class="progress-fill" style="width:${(r.rate/maxRate*100).toFixed(1)}%; background:${color}"></div></div>
+      <div class="r-val">${r.rate.toFixed(2)}% <span style="color:var(--text-faint)">(${r.breaks.toLocaleString()})</span></div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('[data-jump-stage]').forEach(el=>{
+    el.addEventListener('click', ()=>{ switchTab('stagecontrols'); });
+  });
+
+  const overallStatus = parseFloat(breakRate) < 1.5;
+  document.getElementById('breachDot').className = 'dot ' + (overallStatus?'on':'off');
+  document.getElementById('breachLabel').textContent = overallStatus ? 'Within tolerance' : 'Break rate elevated';
+}
+
+/* ---------------------------------------------------------------
+   7. RENDER: LINEAGE
+   --------------------------------------------------------------- */
+function nodeStatsFor(kind, flow){
+  // kind: 'source' | 'staging' | 'transform:<FLOW>' | 'risk' | 'publish' | 'export:<FLOW>'
+  if(kind==='source'){
+    const rows = stageRowsFor(STAGES_ORDER[0], flow);
+    const input = sumBy(rows,'InputRows');
+    return {label:'R071_DW_TRADE ⊕ MUFGBK', type:'Source objects', input, output:input, breaks:0, drop:0, pass:input};
+  }
+  if(kind==='staging'){
+    const rows = stageRowsFor(STAGES_ORDER[0], flow);
+    return {label:'vwTradeStaging / #TradeStaging', type:'Staging view + temp table', input:sumBy(rows,'InputRows'), output:sumBy(rows,'OutputRows'), breaks:sumBy(rows,'BreakCount'), drop:sumBy(rows,'DropCount'), pass:sumBy(rows,'PassCount')};
+  }
+  if(kind.startsWith('transform')){
+    const f = kind.split(':')[1];
+    const rows = stageRowsFor(STAGES_ORDER[1], f);
+    const names = {'ETD':'ETD lookups: Book, BookingAccount, Organisation, TradeTypology, Strategy, ExchangeTraded, SecurityMarketData, StaticRICMapping',
+      'OTC':'OTC lookups: Book, BookingAccount, Organisation, Strategy, SecurityMarketData, StaticRICMapping, Trade, SalesTrade, SalesCreditHierarchy',
+      'NON-OTC':'NON-OTC lookups: ISIN/CUSIP maps, Book, BookingAccount, Organisation, SecurityMarketData, StaticRICMapping, Trade, SalesTrade, SalesCreditHierarchy'};
+    return {label:f+' Transform', type:names[f], input:sumBy(rows,'InputRows'), output:sumBy(rows,'OutputRows'), breaks:sumBy(rows,'BreakCount'), drop:sumBy(rows,'DropCount'), pass:sumBy(rows,'PassCount')};
+  }
+  if(kind==='risk'){
+    const rows = STATE.data.risk_enrichment_failures.filter(r=> flow==='ALL' || r.Flow===flow);
+    const finals = STATE.data.final_records.filter(r=> flow==='ALL' || r.Flow===flow);
+    const input = finals.length + rows.length;
+    return {label:'Risk Enrichment', type:'SensitivityFact, Curve, TradeLegDaily, PVHub -> Surveillance_OTC_Fields', input, output:finals.length, breaks:rows.length, drop:0, pass:finals.length};
+  }
+  if(kind==='publish'){
+    const rows = stageRowsFor(STAGES_ORDER[2], flow);
+    return {label:'Surveillance.Trades', type:'Transform.Surveillance_Trades -> Surveillance.Trades (+ vwLatestRefinitivRIC)', input:sumBy(rows,'InputRows'), output:sumBy(rows,'OutputRows'), breaks:sumBy(rows,'BreakCount'), drop:sumBy(rows,'DropCount'), pass:sumBy(rows,'PassCount')};
+  }
+  if(kind.startsWith('export')){
+    const f = kind.split(':')[1];
+    const rows = STATE.data.final_records.filter(r=> r.Flow===f);
+    return {label:f+'.csv export', type:'Final publish extract file', input:rows.length, output:rows.length, breaks:0, drop:0, pass:rows.length};
+  }
+  return {label:kind,type:'',input:0,output:0,breaks:0,drop:0,pass:0};
+}
+
+function nodeHTML(id, kind, flow, flowClass){
+  const s = nodeStatsFor(kind, flow);
+  const pillClass = s.breaks>0 ? '' : 'zero';
+  return `
+  <div class="node ${flowClass||''}" data-node-id="${id}" data-kind="${kind}" data-flow="${flow}">
+    <div class="n-type">${s.type}</div>
+    <div class="n-name">${s.label}</div>
+    <div class="n-stats">
+      <div class="n-stat"><div class="v">${s.input.toLocaleString()}</div><div class="l">In</div></div>
+      <div class="n-stat"><div class="v">${s.output.toLocaleString()}</div><div class="l">Out</div></div>
+    </div>
+    <span class="n-break-pill ${pillClass}">${s.breaks.toLocaleString()} break${s.breaks===1?'':'s'}</span>
+  </div>`;
+}
+
+function renderLineage(){
+  const flow = STATE.lineageFlowFilter;
+  const arrow = `<div class="connector-col"><div class="connector-line"></div><div class="connector-arrow">&#9656;</div></div>`;
+
+  let html = `<div class="lane-label">Source</div>`;
+  html += `<div class="lineage-row">${nodeHTML('source','source',flow)}${arrow}`;
+  html += `${nodeHTML('staging','staging',flow)}${arrow}`;
+
+  html += `<div class="split-wrap">`;
+  const flowsToShow = flow==='ALL' ? FLOWS : [flow];
+  flowsToShow.forEach(f=>{
+    html += nodeHTML('transform-'+f, 'transform:'+f, f, FLOW_CLASS[f]);
+  });
+  html += `</div>${arrow}`;
+
+  html += `${nodeHTML('risk','risk',flow)}${arrow}`;
+  html += `${nodeHTML('publish','publish',flow)}${arrow}`;
+
+  html += `<div class="split-wrap">`;
+  flowsToShow.forEach(f=>{
+    html += nodeHTML('export-'+f, 'export:'+f, f, FLOW_CLASS[f]);
+  });
+  html += `</div>`;
+  html += `</div>`;
+
+  document.getElementById('lineageDiagram').innerHTML = html;
+
+  document.querySelectorAll('#lineageDiagram .node').forEach(n=>{
+    n.addEventListener('click', ()=>{
+      document.querySelectorAll('#lineageDiagram .node').forEach(x=>x.classList.remove('selected'));
+      n.classList.add('selected');
+      showNodeDetail(n.dataset.kind, n.dataset.flow);
+    });
+  });
+}
+
+function showNodeDetail(kind, flow){
+  const s = nodeStatsFor(kind, flow);
+  const panel = document.getElementById('nodeDetailPanel');
+  panel.style.display = 'block';
+  const dropPct = s.input ? ((s.input - s.output)/s.input*100).toFixed(2) : '0.00';
+  panel.innerHTML = `
+    <div class="panel-title">${s.label} <span style="color:var(--text-faint); font-weight:400;">&middot; ${flow==='ALL'?'all flows':flow}</span></div>
+    <div class="panel-sub">${s.type}</div>
+    <div class="nd-grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:14px;">
+      <div class="nd-item"><div class="v">${s.input.toLocaleString()}</div><div class="l">Records in</div></div>
+      <div class="nd-item"><div class="v">${s.output.toLocaleString()}</div><div class="l">Records out</div></div>
+      <div class="nd-item"><div class="v" style="color:${s.breaks>0?'var(--fail)':'var(--pass)'}">${s.breaks.toLocaleString()}</div><div class="l">Breaks</div></div>
+      <div class="nd-item"><div class="v">${(s.drop||0).toLocaleString()}</div><div class="l">Drop count</div></div>
+      <div class="nd-item"><div class="v">${s.pass.toLocaleString()}</div><div class="l">Pass count</div></div>
+      <div class="nd-item"><div class="v">${dropPct}%</div><div class="l">Volume loss</div></div>
+    </div>
+    <div class="nd-actions">
+      <button class="btn primary" id="jumpToBreaksBtn">View break records for this block &rarr;</button>
+    </div>`;
+  document.getElementById('jumpToBreaksBtn').addEventListener('click', ()=>{
+    STATE.breaks.flow = flow==='ALL' ? 'ALL' : flow;
+    STATE.breaks.stage = kindToStageLabel(kind);
+    STATE.breaks.page = 1;
+    switchTab('breaks');
+    renderBreaksTab();
+  });
+}
+function kindToStageLabel(kind){
+  if(kind==='staging') return 'Source -> Staging';
+  if(kind.startsWith('transform')) return 'Staging -> Transform';
+  if(kind==='publish') return 'Transform -> Publish';
+  return 'ALL';
+}
+
+/* ---------------------------------------------------------------
+   8. RENDER: STAGE CONTROLS
+   --------------------------------------------------------------- */
+function renderStageControls(){
+  const flow = STATE.stageFlowFilter;
+  const grid = document.getElementById('stageCtrlGrid');
+  const blocks = [
+    {stage:'Source -> Staging', metrics:'M_CONTRACT, M_TP_GID, M_TP_PFOLIO, M_TP_PRICE, M_TP_NOMINAL', reasonsSet:'source'},
+    {stage:'Staging -> Transform', metrics:'Book, Currency, Notional, Price, Trade Date, VenueMIC, TraderID, SalesName + RIC / ISIN / LEI / Counterparty lookups', reasonsSet:'lookup'},
+    {stage:'Transform -> Publish', metrics:'Row count, Notional, Price, RIC, Issuer Permid, Quote Permid, IR01, CurveName', reasonsSet:'risk'}
+  ];
+  grid.innerHTML = blocks.map((b,idx)=>{
+    const t = totalsForStage(b.stage, flow);
+    const matched = t.pass, unmatched = t.breaks, delta = t.input - t.output;
+    const status = unmatched===0 ? 'pass' : (unmatched/Math.max(t.input,1) > 0.03 ? 'fail' : 'warn');
+    let reasonChips = '';
+    if(b.reasonsSet==='lookup'){
+      reasonChips = uniqueReasonChips(STATE.data.lookup_failures.filter(r=>flow==='ALL'||r.Flow===flow), 'LookupType');
+    } else if(b.reasonsSet==='risk'){
+      reasonChips = uniqueReasonChips(STATE.data.risk_enrichment_failures.filter(r=>flow==='ALL'||r.Flow===flow), 'Field');
+    } else {
+      reasonChips = `<span class="reason-chip">Dropped</span><span class="reason-chip">Delayed</span><span class="reason-chip">Duplicated</span>`;
+    }
+    return `
+    <div class="stage-ctrl ${idx===0?'open':''}" id="sc-${idx}">
+      <div class="stage-ctrl-head" data-toggle="sc-${idx}">
+        <div class="sc-title-wrap">
+          <span class="sc-chevron">&#9656;</span>
+          <span class="sc-title">${b.stage}</span>
+          <span class="badge ${status}">${status==='pass'?'Pass':status==='warn'?'Watch':'Fail'}</span>
+        </div>
+        <span class="mono" style="font-size:11px; color:var(--text-faint)">${t.input.toLocaleString()} &rarr; ${t.output.toLocaleString()}</span>
+      </div>
+      <div class="sc-body">
+        <div class="panel-sub" style="margin-top:12px;">Metrics tracked: <span class="mono" style="color:var(--text-dim)">${b.metrics}</span></div>
+        <div class="sc-metric-grid">
+          <div class="sc-metric"><div class="v">${t.input.toLocaleString()}</div><div class="l">Source rows</div></div>
+          <div class="sc-metric"><div class="v">${t.output.toLocaleString()}</div><div class="l">Target rows</div></div>
+          <div class="sc-metric ${delta>0?'warn':''}"><div class="v">${delta.toLocaleString()}</div><div class="l">Delta</div></div>
+          <div class="sc-metric pass"><div class="v">${matched.toLocaleString()}</div><div class="l">Matched</div></div>
+          <div class="sc-metric fail"><div class="v">${unmatched.toLocaleString()}</div><div class="l">Unmatched</div></div>
+          <div class="sc-metric"><div class="v">${t.dup.toLocaleString()}</div><div class="l">Duplicate</div></div>
+          <div class="sc-metric"><div class="v">${t.nullLookup.toLocaleString()}</div><div class="l">Null lookup</div></div>
+        </div>
+        <div class="panel-sub">Reason codes observed</div>
+        <div class="reason-chip-row">${reasonChips || '<span style="color:var(--text-faint); font-size:11.5px;">No exceptions recorded</span>'}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('[data-toggle]').forEach(h=>{
+    h.addEventListener('click', ()=>{
+      document.getElementById(h.dataset.toggle).classList.toggle('open');
+    });
+  });
+  grid.querySelectorAll('.reason-chip').forEach(chip=>{
+    chip.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      STATE.breaks.search = chip.dataset.reasonSearch || '';
+      STATE.breaks.page = 1;
+      switchTab('breaks');
+      document.getElementById('breakSearch').value = STATE.breaks.search;
+      renderBreaksTab();
+    });
+  });
+}
+function uniqueReasonChips(rows, field){
+  const counts = {};
+  rows.forEach(r=>{ const k=r[field]||'Unknown'; counts[k]=(counts[k]||0)+1; });
+  return Object.keys(counts).map(k=>`<span class="reason-chip" data-reason-search="${k}">${k} (${counts[k]})</span>`).join('');
+}
+
+/* ---------------------------------------------------------------
+   9. RENDER: BREAKS TABLE
+   --------------------------------------------------------------- */
+function allBreakRecords(){
+  // Unify break_details (row-level breaks) as the primary exception feed.
+  return STATE.data.break_details;
+}
+function populateBreakFilterOptions(){
+  const stages = Array.from(new Set(allBreakRecords().map(r=>r.Stage))).filter(Boolean);
+  const types = Array.from(new Set(allBreakRecords().map(r=>r.BreakType))).filter(Boolean);
+  const stageSel = document.getElementById('breakStageFilter');
+  const typeSel = document.getElementById('breakTypeFilter');
+  const curStage = STATE.breaks.stage, curType = STATE.breaks.type;
+  stageSel.innerHTML = `<option value="ALL">All stages</option>` + stages.map(s=>`<option value="${s}">${s}</option>`).join('');
+  typeSel.innerHTML = `<option value="ALL">All break types</option>` + types.map(t=>`<option value="${t}">${t}</option>`).join('');
+  stageSel.value = stages.includes(curStage) ? curStage : 'ALL';
+  typeSel.value = types.includes(curType) ? curType : 'ALL';
+}
+function filteredBreaks(){
+  const { search, stage, flow, type } = STATE.breaks;
+  const q = search.trim().toLowerCase();
+  return allBreakRecords().filter(r=>{
+    if(stage!=='ALL' && r.Stage!==stage) return false;
+    if(flow!=='ALL' && r.Flow!==flow) return false;
+    if(type!=='ALL' && r.BreakType!==type) return false;
+    if(q){
+      const hay = [r.TradeID,r.ContractID,r.RIC,r.ISIN,r.LEI,r.Counterparty,r.Reason].join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function activeBreakFields(){ return STATE.config.breakFields.filter(f=>f.visible); }
+
+// Generic cell renderer: known keys get their existing badge/format treatment,
+// unknown/custom keys (added via Settings) fall back to plain text or number formatting.
+function renderGenericCell(key, r){
+  const v = r[key];
+  if(key==='Flow') return `<span class="flow-tag ${v||''}">${v||''}</span>`;
+  if(key==='BreakType') return v ? `<span class="status-pill fail">${v}</span>` : '';
+  if(key==='Status'){ const st=(v||'').toUpperCase()==='PASS'?'pass':'fail'; return v ? `<span class="status-pill ${st}">${v}</span>` : ''; }
+  if(key==='__src') return `<span style="color:var(--text-dim); font-family:var(--font-body); font-size:11.5px;">${v||''}</span>`;
+  if(key==='Reason') return `<span style="white-space:normal; display:inline-block; max-width:220px;">${v||''}</span>`;
+  if(v!==undefined && v!=='' && !isNaN(toNum(v)) && /^-?[\d.,]+$/.test(String(v).trim())){
+    return toNum(v).toLocaleString(undefined,{maximumFractionDigits:2});
+  }
+  return v!==undefined ? v : '';
+}
+
+function renderBreaksTab(){
+  populateBreakFilterOptions();
+  const rows = filteredBreaks();
+  document.getElementById('breaksTag').textContent = allBreakRecords().length.toLocaleString();
+  const cols = activeBreakFields();
+
+  rows.sort((a,b)=>{
+    const {sortKey, sortDir} = STATE.breaks;
+    let av=a[sortKey], bv=b[sortKey];
+    const an = toNum(av), bn = toNum(bv);
+    if(!isNaN(an) && !isNaN(bn) && av!=='' && bv!==''){ return (an-bn)*sortDir; }
+    return String(av||'').localeCompare(String(bv||'')) * sortDir;
+  });
+
+  const {page, pageSize} = STATE.breaks;
+  const totalPages = Math.max(1, Math.ceil(rows.length/pageSize));
+  STATE.breaks.page = Math.min(page, totalPages);
+  const start = (STATE.breaks.page-1)*pageSize;
+  const pageRows = rows.slice(start, start+pageSize);
+
+  const table = document.getElementById('breaksTable');
+  if(!cols.length){
+    table.querySelector('thead').innerHTML = '';
+    table.querySelector('tbody').innerHTML = `<tr><td><div class="empty-state"><div class="es-title">No columns selected</div>Go to Settings &rarr; Breaks / Exceptions table fields and make at least one field visible.</div></td></tr>`;
+    document.getElementById('breaksPagination').innerHTML = '';
+    return;
+  }
+  table.querySelector('thead').innerHTML = '<tr>' + cols.map(c=>{
+    const arrow = STATE.breaks.sortKey===c.key ? (STATE.breaks.sortDir===1?'&#9650;':'&#9660;') : '';
+    return `<th data-sort="${c.key}">${c.label} <span class="sort-arrow">${arrow}</span></th>`;
+  }).join('') + '</tr>';
+
+  if(pageRows.length===0){
+    table.querySelector('tbody').innerHTML = `<tr><td colspan="${cols.length}"><div class="empty-state"><div class="es-title">No break records match these filters</div>Try clearing filters or broadening the search.</div></td></tr>`;
+  } else {
+    table.querySelector('tbody').innerHTML = pageRows.map((r,i)=>`
+      <tr data-break-idx="${start+i}">
+        ${cols.map(c=>`<td>${renderGenericCell(c.key, r)}</td>`).join('')}
+      </tr>`).join('');
+  }
+
+  table.querySelectorAll('th[data-sort]').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.sort;
+      if(STATE.breaks.sortKey===key) STATE.breaks.sortDir *= -1; else { STATE.breaks.sortKey=key; STATE.breaks.sortDir=1; }
+      renderBreaksTab();
+    });
+  });
+  table.querySelectorAll('tbody tr[data-break-idx]').forEach(tr=>{
+    tr.addEventListener('click', ()=>{
+      const rec = rows[parseInt(tr.dataset.breakIdx,10)];
+      openRecordModal(rec, true);
+    });
+  });
+
+  document.getElementById('breaksPagination').innerHTML = `
+    <span>Page ${STATE.breaks.page} of ${totalPages} &middot; ${rows.length.toLocaleString()} records</span>
+    <button id="bkPrev" ${STATE.breaks.page<=1?'disabled':''}>&larr; Prev</button>
+    <button id="bkNext" ${STATE.breaks.page>=totalPages?'disabled':''}>Next &rarr;</button>`;
+  document.getElementById('bkPrev').addEventListener('click', ()=>{ STATE.breaks.page--; renderBreaksTab(); });
+  document.getElementById('bkNext').addEventListener('click', ()=>{ STATE.breaks.page++; renderBreaksTab(); });
+}
+
+function exportFilteredBreaksCSV(){
+  const rows = filteredBreaks();
+  if(!rows.length){ alert('No rows match the current filters.'); return; }
+  const cols = activeBreakFields().map(c=>c.key);
+  const csv = [cols.join(',')].concat(rows.map(r=> cols.map(c=> csvEscape(r[c])).join(','))).join('\n');
+  downloadFile('filtered_breaks_'+Date.now()+'.csv', csv, 'text/csv;charset=utf-8;');
+}
+function csvEscape(v){
+  v = v===undefined||v===null ? '' : String(v);
+  if(/[",\n]/.test(v)) return '"'+v.replace(/"/g,'""')+'"';
+  return v;
+}
+function downloadFile(name, content, mime){
+  const blob = new Blob([content], {type: mime || 'text/plain;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+/* ---------------------------------------------------------------
+   10. RENDER: DRILL DOWN (cross-tab record search)
+   --------------------------------------------------------------- */
+function drillUniverse(){
+  const src = STATE.drill.source;
+  let sets = [];
+  if(src==='ALL' || src==='final') sets.push(...STATE.data.final_records.map(r=>({...r, __src:'Final publish', Reason:'', Stage:'Transform -> Publish'})));
+  if(src==='ALL' || src==='breaks') sets.push(...STATE.data.break_details.map(r=>({...r, __src:'Break detail'})));
+  if(src==='ALL' || src==='lookup') sets.push(...STATE.data.lookup_failures.map(r=>({...r, __src:'Lookup failure', Stage:'Staging -> Transform', Reason:r.Reason})));
+  if(src==='ALL' || src==='risk') sets.push(...STATE.data.risk_enrichment_failures.map(r=>({...r, __src:'Risk enrichment failure', Stage:'Risk Enrichment', Reason:r.Reason})));
+  return sets;
+}
+function filteredDrill(){
+  const {search, status} = STATE.drill;
+  const q = search.trim().toLowerCase();
+  return drillUniverse().filter(r=>{
+    if(status!=='ALL'){
+      const st = (r.Status||'Fail').toUpperCase();
+      if(status==='PASS' && st!=='PASS') return false;
+      if(status==='FAIL' && st==='PASS') return false;
+    }
+    if(q){
+      const hay = [r.TradeID,r.ContractID,r.RIC,r.ISIN,r.LEI].join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function activeDrillFields(){ return STATE.config.drillFields.filter(f=>f.visible); }
+
+function renderDrillTab(){
+  const rows = filteredDrill();
+  document.getElementById('drillResultCount').textContent = rows.length.toLocaleString() + ' matching records across all lineage stages';
+  rows.sort((a,b)=>{
+    const {sortKey, sortDir} = STATE.drill;
+    return String(a[sortKey]||'').localeCompare(String(b[sortKey]||'')) * sortDir;
+  });
+  const {page, pageSize} = STATE.drill;
+  const totalPages = Math.max(1, Math.ceil(rows.length/pageSize));
+  STATE.drill.page = Math.min(page, totalPages);
+  const start = (STATE.drill.page-1)*pageSize;
+  const pageRows = rows.slice(start, start+pageSize);
+
+  const table = document.getElementById('drillTable');
+  const cols = activeDrillFields();
+  if(!cols.length){
+    table.querySelector('thead').innerHTML = '';
+    table.querySelector('tbody').innerHTML = `<tr><td><div class="empty-state"><div class="es-title">No columns selected</div>Go to Settings &rarr; Drill-Down Details table fields and make at least one field visible.</div></td></tr>`;
+    document.getElementById('drillPagination').innerHTML = '';
+    return;
+  }
+  table.querySelector('thead').innerHTML = '<tr>' + cols.map(c=>`<th data-sort="${c.key}">${c.label}</th>`).join('') + '</tr>';
+  if(pageRows.length===0){
+    table.querySelector('tbody').innerHTML = `<tr><td colspan="${cols.length}"><div class="empty-state"><div class="es-title">No records found</div>Search by trade ID, contract ID, RIC or ISIN.</div></td></tr>`;
+  } else {
+    table.querySelector('tbody').innerHTML = pageRows.map((r,i)=>`
+      <tr data-drill-idx="${start+i}">
+        ${cols.map(c=>`<td>${renderGenericCell(c.key, r)}</td>`).join('')}
+      </tr>`).join('');
+  }
+  table.querySelectorAll('th[data-sort]').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.sort;
+      if(STATE.drill.sortKey===key) STATE.drill.sortDir *= -1; else { STATE.drill.sortKey=key; STATE.drill.sortDir=1; }
+      renderDrillTab();
+    });
+  });
+  table.querySelectorAll('tbody tr[data-drill-idx]').forEach(tr=>{
+    tr.addEventListener('click', ()=>{
+      const rec = rows[parseInt(tr.dataset.drillIdx,10)];
+      openRecordModal(rec, (rec.Status||'Fail').toUpperCase()!=='PASS');
+    });
+  });
+  document.getElementById('drillPagination').innerHTML = `
+    <span>Page ${STATE.drill.page} of ${totalPages}</span>
+    <button id="drPrev" ${STATE.drill.page<=1?'disabled':''}>&larr; Prev</button>
+    <button id="drNext" ${STATE.drill.page>=totalPages?'disabled':''}>Next &rarr;</button>`;
+  document.getElementById('drPrev').addEventListener('click', ()=>{ STATE.drill.page--; renderDrillTab(); });
+  document.getElementById('drNext').addEventListener('click', ()=>{ STATE.drill.page++; renderDrillTab(); });
+}
+
+/* ---------------------------------------------------------------
+   11. RECORD MODAL
+   --------------------------------------------------------------- */
+const MODAL_FIELDS = [
+  ['TradeID','Trade ID'],['ContractID','Contract ID'],['Flow','Flow'],['Book','Book'],['Currency','Currency'],
+  ['Notional','Notional'],['Price','Price'],['TradeDate','Trade date'],['RIC','RIC'],['ISIN','ISIN'],['LEI','LEI'],
+  ['Counterparty','Counterparty'],['SalesName','Sales name'],['CurveName','Curve name'],['IR01','IR01'],
+  ['IssuerPermid','Issuer PermID'],['QuotePermid','Quote PermID']
+];
+function openRecordModal(rec, isFail){
+  document.getElementById('modalTitle').textContent = 'Record ' + (rec.TradeID||'');
+  document.getElementById('modalGrid').innerHTML = MODAL_FIELDS
+    .filter(([k])=> rec[k]!==undefined && rec[k]!=='')
+    .map(([k,label])=> `<div class="modal-field"><div class="l">${label}</div><div class="v">${rec[k]}</div></div>`).join('');
+  const reasonBox = document.getElementById('modalReasonBox');
+  if(isFail && (rec.Reason || rec.BreakType)){
+    reasonBox.style.display='block';
+    let txt = rec.Reason || '';
+    if(rec.BreakType) txt = `[${rec.BreakType}] ` + txt;
+    if(rec.Stage) txt += ` &middot; failed at ${rec.Stage}`;
+    document.getElementById('modalReasonText').innerHTML = txt;
+  } else {
+    reasonBox.style.display='none';
+  }
+  document.getElementById('modalBackdrop').classList.add('open');
+}
+document.getElementById('modalClose').addEventListener('click', ()=> document.getElementById('modalBackdrop').classList.remove('open'));
+document.getElementById('modalBackdrop').addEventListener('click', (e)=>{ if(e.target.id==='modalBackdrop') document.getElementById('modalBackdrop').classList.remove('open'); });
+
+/* ---------------------------------------------------------------
+   12. FILE LOADER TAB
+   --------------------------------------------------------------- */
+function renderLoaderTab(){
+  const grid = document.getElementById('loaderGrid');
+  const schemas = STATE.config.csvSchemas;
+  grid.innerHTML = Object.keys(schemas).map(key=>{
+    const schema = schemas[key];
+    const loaded = STATE.loadedFiles[key];
+    return `
+    <div class="loader-card">
+      <h4>${schema.file}</h4>
+      <div class="lc-file">${schema.columns.join(', ')}</div>
+      <p>${schema.note}</p>
+      <div class="file-drop ${loaded?'loaded':''}" id="drop-${key}">
+        ${loaded ? '&#10003; ' + loaded : 'Drop or choose CSV file&hellip;'}
+        <input type="file" accept=".csv,text/csv" data-key="${key}">
+      </div>
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('input[type=file]').forEach(inp=>{
+    inp.addEventListener('change', (e)=>{
+      const key = inp.dataset.key;
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        STATE.data[key] = parseCSV(ev.target.result);
+        STATE.loadedFiles[key] = file.name;
+        finishLoad('Custom data loaded');
+        renderLoaderTab();
+      };
+      reader.readAsText(file);
+    });
+  });
+
+  document.getElementById('mappingNote').textContent =
+`ASSUMPTIONS DOCUMENTED FOR THIS BUILD
+- Flow values are exactly: ETD | OTC | NON-OTC (matches the three export files off Surveillance.Trades).
+- Stage values in the three summary CSVs are exactly: "Source -> Staging" | "Staging -> Transform" | "Transform -> Publish".
+- Numeric columns (InputRows, OutputRows, BreakCount, PassCount, DropCount, DupCount, NullLookupCount, Notional, Price, IR01) parse as plain numbers, comma thousands-separators tolerated.
+- break_details.csv is treated as the row-level source of truth for the Breaks/Exceptions tab; lookup_failures.csv and risk_enrichment_failures.csv feed Stage Controls reason chips and the Drill-Down record sets.
+- final_records.csv Status column is expected to read "Pass" for every row (only unreconciled rows appear in the break/failure extracts) but the UI tolerates a Status of Fail here too.
+- All CSVs are read client-side via FileReader; nothing is uploaded anywhere.
+- File names, column lists and notes above are editable in Settings -> File Loader / Data Import.`;
+}
+
+/* ---------------------------------------------------------------
+   12a. APPEARANCE (THEME) + LABELS — apply + editors
+   --------------------------------------------------------------- */
+function applyTheme(){
+  const theme = STATE.config.theme;
+  THEME_TOKEN_DEFS.forEach(def=>{
+    const v = theme[def.key];
+    if(v===undefined || v===null || v==='') return;
+    document.documentElement.style.setProperty(def.cssVar, def.type==='range' ? (v+(def.unit||'')) : v);
+  });
+}
+function applyLabels(){
+  const L = STATE.config.labels;
+  document.querySelectorAll('[data-label]').forEach(el=>{
+    const key = el.dataset.label;
+    el.textContent = (L[key] !== undefined && L[key] !== '') ? L[key] : DEFAULT_LABELS[key];
+  });
+  const titleEl = document.getElementById('brandTitleEl');
+  const subEl = document.getElementById('brandSubtitleEl');
+  if(titleEl) titleEl.textContent = L.brandTitle || DEFAULT_LABELS.brandTitle;
+  if(subEl) subEl.textContent = L.brandSubtitle || DEFAULT_LABELS.brandSubtitle;
+}
+
+function renderThemeEditor(){
+  const theme = STATE.config.theme;
+  const groups = { surface:'themeSurfaceGrid', text:'themeTextGrid', semantic:'themeSemanticGrid', flow:'themeFlowGrid', shape:'themeShapeGrid' };
+  Object.values(groups).forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=''; });
+
+  THEME_TOKEN_DEFS.forEach(def=>{
+    const container = document.getElementById(groups[def.group]);
+    if(!container) return;
+    const wrap = document.createElement('div');
+    if(def.type==='color'){
+      wrap.className = 'theme-field';
+      wrap.innerHTML = `
+        <input type="color" data-token="${def.key}" value="${theme[def.key]}">
+        <div class="theme-field-meta">
+          <span class="tf-label">${def.label}</span>
+          <span class="tf-hex">${theme[def.key]}</span>
+        </div>`;
+      const input = wrap.querySelector('input');
+      input.addEventListener('input', ()=>{
+        theme[def.key] = input.value;
+        wrap.querySelector('.tf-hex').textContent = input.value;
+        applyTheme();
+      });
+    } else {
+      wrap.className = 'theme-field range-field';
+      wrap.innerHTML = `
+        <div class="tf-row"><span>${def.label}</span><span>${theme[def.key]}${def.unit||''}</span></div>
+        <input type="range" data-token="${def.key}" min="${def.min}" max="${def.max}" step="${def.step}" value="${theme[def.key]}">`;
+      const input = wrap.querySelector('input');
+      input.addEventListener('input', ()=>{
+        theme[def.key] = parseFloat(input.value);
+        wrap.querySelector('.tf-row span:last-child').textContent = theme[def.key]+(def.unit||'');
+        applyTheme();
+      });
+    }
+    container.appendChild(wrap);
+  });
+}
+
+function renderThemePresets(){
+  const row = document.getElementById('themePresetRow');
+  row.innerHTML = THEME_PRESETS.map((p,i)=>`
+    <button type="button" class="theme-preset-btn" data-preset-idx="${i}">
+      <span class="theme-preset-swatch">
+        <span style="background:${p.theme.bg}"></span><span style="background:${p.theme.panel}"></span>
+        <span style="background:${p.theme.accent}"></span><span style="background:${p.theme.fail}"></span>
+      </span>
+      ${p.name}
+    </button>`).join('');
+  row.querySelectorAll('[data-preset-idx]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const preset = THEME_PRESETS[parseInt(btn.dataset.presetIdx,10)];
+      STATE.config.theme = cloneDeep(preset.theme);
+      applyTheme();
+      renderThemeEditor();
+    });
+  });
+}
+document.getElementById('resetThemeBtn').addEventListener('click', ()=>{
+  STATE.config.theme = cloneDeep(DEFAULT_THEME);
+  applyTheme();
+  renderThemeEditor();
+});
+
+const LABEL_GROUPS = {
+  brand: { containerId:'labelsEditorBrand', keys:['brandTitle','brandSubtitle','tabOverview','tabLineage','tabStageControls','tabBreaks','tabDrilldown','tabLoader','tabSettings'] },
+  titles: { containerId:'labelsEditorTitles', keys:['titleOverview','titleLineage','titleStageControls','titleBreaks','titleDrilldown','titleLoader'] },
+  kpi: { containerId:'labelsEditorKpi', keys:['kpi1','kpi2','kpi3','kpi4','kpi5','kpi6'] }
+};
+function renderLabelsEditor(){
+  const L = STATE.config.labels;
+  Object.values(LABEL_GROUPS).forEach(group=>{
+    const container = document.getElementById(group.containerId);
+    if(!container) return;
+    container.innerHTML = group.keys.map(key=>`
+      <div class="label-field">
+        <label>${key}</label>
+        <input class="input" data-label-key="${key}" value="${(L[key]!==undefined?L[key]:DEFAULT_LABELS[key])}" placeholder="${DEFAULT_LABELS[key]}">
+      </div>`).join('');
+    container.querySelectorAll('[data-label-key]').forEach(inp=>{
+      inp.addEventListener('input', ()=>{
+        L[inp.dataset.labelKey] = inp.value;
+        applyLabels();
+        renderOverview();
+      });
+    });
+  });
+}
+document.getElementById('resetLabelsBtn').addEventListener('click', ()=>{
+  STATE.config.labels = cloneDeep(DEFAULT_LABELS);
+  applyLabels();
+  renderLabelsEditor();
+  renderOverview();
+});
+
+/* ---------------------------------------------------------------
+   12b. SETTINGS TAB — field configuration, CSV schemas, notifications
+   --------------------------------------------------------------- */
+function renderSettingsTab(){
+  renderThemePresets();
+  renderThemeEditor();
+  renderLabelsEditor();
+  renderFieldEditor('break');
+  renderFieldEditor('drill');
+  renderCsvSchemaEditor();
+  renderNotificationSettings();
+}
+
+/* ---- generic field editor (Breaks / Drill-Down column config) ---- */
+function renderFieldEditor(kind){
+  const list = kind==='break' ? STATE.config.breakFields : STATE.config.drillFields;
+  const containerId = kind==='break' ? 'breakFieldEditor' : 'drillFieldEditor';
+  const container = document.getElementById(containerId);
+  if(!list.length){
+    container.innerHTML = `<div class="empty-state" style="padding:16px 4px;">No fields configured. Add one below.</div>`;
+  } else {
+    container.innerHTML = list.map((f,i)=>`
+      <div class="field-row" data-idx="${i}">
+        <input class="input" data-prop="key" value="${f.key}">
+        <input class="input" data-prop="label" value="${f.label}">
+        <span class="visible-toggle"><input type="checkbox" data-prop="visible" ${f.visible?'checked':''}></span>
+        <span class="order-btns">
+          <button type="button" data-move="up" ${i===0?'disabled':''} title="Move up">&#9650;</button>
+          <button type="button" data-move="down" ${i===list.length-1?'disabled':''} title="Move down">&#9660;</button>
+        </span>
+        <button type="button" class="remove-field" data-remove>Remove</button>
+      </div>`).join('');
+  }
+
+  container.querySelectorAll('.field-row').forEach(row=>{
+    const idx = parseInt(row.dataset.idx,10);
+    row.querySelectorAll('[data-prop]').forEach(inp=>{
+      const evt = inp.type==='checkbox' ? 'change' : 'input';
+      inp.addEventListener(evt, ()=>{
+        const prop = inp.dataset.prop;
+        list[idx][prop] = inp.type==='checkbox' ? inp.checked : inp.value;
+        refreshAfterFieldChange(kind);
+      });
+    });
+    row.querySelectorAll('[data-move]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const dir = btn.dataset.move==='up' ? -1 : 1;
+        const swapIdx = idx+dir;
+        if(swapIdx<0 || swapIdx>=list.length) return;
+        [list[idx], list[swapIdx]] = [list[swapIdx], list[idx]];
+        renderFieldEditor(kind);
+        refreshAfterFieldChange(kind, true);
+      });
+    });
+    row.querySelector('[data-remove]').addEventListener('click', ()=>{
+      list.splice(idx,1);
+      renderFieldEditor(kind);
+      refreshAfterFieldChange(kind, true);
+    });
+  });
+}
+function refreshAfterFieldChange(kind, rerenderEditor){
+  if(kind==='break') renderBreaksTab(); else renderDrillTab();
+  if(rerenderEditor) renderFieldEditor(kind);
+}
+
+document.getElementById('addBreakFieldBtn').addEventListener('click', ()=>{
+  const keyInp = document.getElementById('newBreakFieldKey'), labelInp = document.getElementById('newBreakFieldLabel');
+  const key = keyInp.value.trim(); if(!key) return;
+  STATE.config.breakFields.push({key, label: labelInp.value.trim()||key, visible:true});
+  keyInp.value=''; labelInp.value='';
+  renderFieldEditor('break'); renderBreaksTab();
+});
+document.getElementById('resetBreakFieldsBtn').addEventListener('click', ()=>{
+  STATE.config.breakFields = cloneDeep(DEFAULT_BREAK_FIELDS);
+  renderFieldEditor('break'); renderBreaksTab();
+});
+document.getElementById('addDrillFieldBtn').addEventListener('click', ()=>{
+  const keyInp = document.getElementById('newDrillFieldKey'), labelInp = document.getElementById('newDrillFieldLabel');
+  const key = keyInp.value.trim(); if(!key) return;
+  STATE.config.drillFields.push({key, label: labelInp.value.trim()||key, visible:true});
+  keyInp.value=''; labelInp.value='';
+  renderFieldEditor('drill'); renderDrillTab();
+});
+document.getElementById('resetDrillFieldsBtn').addEventListener('click', ()=>{
+  STATE.config.drillFields = cloneDeep(DEFAULT_DRILL_FIELDS);
+  renderFieldEditor('drill'); renderDrillTab();
+});
+
+/* ---- CSV schema editor (File Loader / Data Import config) ---- */
+function renderCsvSchemaEditor(){
+  const container = document.getElementById('csvSchemaEditor');
+  const schemas = STATE.config.csvSchemas;
+  const keys = Object.keys(schemas);
+  if(!keys.length){
+    container.innerHTML = `<div class="empty-state" style="padding:16px 4px;">No CSV schemas configured. Add one below.</div>`;
+  } else {
+    container.innerHTML = keys.map(key=>{
+      const s = schemas[key];
+      return `
+      <div class="schema-card" data-schema="${key}">
+        <div class="schema-head">
+          <input class="input" data-prop="file" value="${s.file}">
+          <button type="button" class="remove-schema" data-remove-schema>Remove schema</button>
+        </div>
+        <textarea class="schema-note-input" data-prop="note">${s.note}</textarea>
+        <div class="chip-row">
+          ${s.columns.map((c,ci)=>`<span class="col-chip">${c}<button type="button" class="chip-remove" data-col-idx="${ci}">&times;</button></span>`).join('') || '<span style="color:var(--text-faint); font-size:11.5px;">No columns yet</span>'}
+        </div>
+        <div class="add-col-row">
+          <input class="input add-col-input" placeholder="Add column name">
+          <button type="button" class="btn small add-col">+ Add column</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  container.querySelectorAll('.schema-card').forEach(card=>{
+    const key = card.dataset.schema;
+    const schema = schemas[key];
+    card.querySelectorAll('[data-prop]').forEach(inp=>{
+      inp.addEventListener('input', ()=>{ schema[inp.dataset.prop] = inp.value; renderLoaderTab(); });
+    });
+    card.querySelectorAll('[data-col-idx]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        schema.columns.splice(parseInt(btn.dataset.colIdx,10),1);
+        renderCsvSchemaEditor(); renderLoaderTab();
+      });
+    });
+    card.querySelector('.add-col').addEventListener('click', ()=>{
+      const inp = card.querySelector('.add-col-input');
+      const val = inp.value.trim();
+      if(!val) return;
+      schema.columns.push(val);
+      renderCsvSchemaEditor(); renderLoaderTab();
+    });
+    card.querySelector('[data-remove-schema]').addEventListener('click', ()=>{
+      delete schemas[key];
+      renderCsvSchemaEditor(); renderLoaderTab();
+    });
+  });
+}
+document.getElementById('addSchemaBtn').addEventListener('click', ()=>{
+  let n=1; let newKey='custom_extract_1';
+  while(STATE.config.csvSchemas[newKey]){ n++; newKey='custom_extract_'+n; }
+  STATE.config.csvSchemas[newKey] = { file:newKey+'.csv', columns:['TradeID','ContractID','Flow'], note:'Custom extract added via Settings.' };
+  STATE.data[newKey] = STATE.data[newKey] || [];
+  renderCsvSchemaEditor(); renderLoaderTab();
+});
+document.getElementById('resetSchemasBtn').addEventListener('click', ()=>{
+  STATE.config.csvSchemas = cloneDeep(DEFAULT_CSV_SCHEMAS);
+  renderCsvSchemaEditor(); renderLoaderTab();
+});
+
+/* ---- notifications: distribution lists, SMTP, Teams ---- */
+function renderNotificationSettings(){
+  const n = STATE.config.notifications;
+  document.getElementById('notifEnabled').checked = n.enabled;
+  document.getElementById('notifThreshold').value = n.breakRateThreshold;
+
+  const dl = document.getElementById('distListEditor');
+  dl.innerHTML = n.distributionLists.length ? n.distributionLists.map(list=>`
+    <div class="distlist-card" data-dl="${list.id}">
+      <div>
+        <div class="dl-name">${list.name}</div>
+        <div class="dl-emails">${list.emails.join(', ')}</div>
+      </div>
+      <button type="button" class="remove-field" data-remove-dl>Remove</button>
+    </div>`).join('') : `<div class="notif-log-empty">No distribution lists configured.</div>`;
+  dl.querySelectorAll('[data-remove-dl]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.closest('[data-dl]').dataset.dl;
+      n.distributionLists = n.distributionLists.filter(l=>l.id!==id);
+      renderNotificationSettings();
+    });
+  });
+
+  const smtpFields = [
+    ['host','SMTP host','text'], ['port','Port','number'], ['username','Username','text'],
+    ['password','Password','password'], ['fromAddress','From address','text']
+  ];
+  const smtpForm = document.getElementById('smtpForm');
+  smtpForm.innerHTML = smtpFields.map(([prop,label,type])=>`
+    <div class="smtp-field">
+      <label>${label}</label>
+      <input class="input" data-smtp="${prop}" type="${type}" value="${n.smtp[prop]!==undefined?n.smtp[prop]:''}">
+    </div>`).join('') + `
+    <div class="smtp-field">
+      <label>Relay endpoint URL (optional)</label>
+      <input class="input" data-smtp="relayEndpoint" type="text" placeholder="https://your-api.example/send-alert" value="${n.smtp.relayEndpoint||''}">
+    </div>
+    <div class="smtp-field checkbox-field">
+      <input type="checkbox" id="smtpTLS" data-smtp="useTLS" ${n.smtp.useTLS?'checked':''}>
+      <label for="smtpTLS">Use TLS</label>
+    </div>`;
+  smtpForm.querySelectorAll('[data-smtp]').forEach(inp=>{
+    const evt = inp.type==='checkbox' ? 'change' : 'input';
+    inp.addEventListener(evt, ()=>{
+      n.smtp[inp.dataset.smtp] = inp.type==='checkbox' ? inp.checked : inp.value;
+    });
+  });
+
+  const teams = document.getElementById('teamsEditor');
+  teams.innerHTML = n.teams.webhooks.length ? n.teams.webhooks.map(w=>`
+    <div class="teams-card" data-webhook="${w.id}">
+      <div>
+        <div class="tc-name">${w.name}</div>
+        <div class="tc-url">${w.url}</div>
+      </div>
+      <div class="tc-actions">
+        <button type="button" class="btn small" data-test-teams>Send test</button>
+        <button type="button" class="remove-field" data-remove-teams>Remove</button>
+      </div>
+    </div>`).join('') : `<div class="notif-log-empty">No Teams webhooks configured.</div>`;
+  teams.querySelectorAll('[data-remove-teams]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.closest('[data-webhook]').dataset.webhook;
+      n.teams.webhooks = n.teams.webhooks.filter(w=>w.id!==id);
+      renderNotificationSettings();
+    });
+  });
+  teams.querySelectorAll('[data-test-teams]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.closest('[data-webhook]').dataset.webhook;
+      const w = n.teams.webhooks.find(w=>w.id===id);
+      if(w) sendTeamsMessage(w, 'Test message from SVL-071 Reconciliation Console. Notifications are wired up correctly.');
+    });
+  });
+
+  renderNotifLog();
+}
+document.getElementById('notifEnabled').addEventListener('change', (e)=>{ STATE.config.notifications.enabled = e.target.checked; });
+document.getElementById('notifThreshold').addEventListener('input', (e)=>{ STATE.config.notifications.breakRateThreshold = parseFloat(e.target.value)||0; });
+
+document.getElementById('addDistListBtn').addEventListener('click', ()=>{
+  const nameInp = document.getElementById('newDistListName'), emailsInp = document.getElementById('newDistListEmails');
+  const name = nameInp.value.trim(); const emails = emailsInp.value.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!name || !emails.length) return;
+  STATE.config.notifications.distributionLists.push({id:'dl-'+(notifIdCounter++), name, emails});
+  nameInp.value=''; emailsInp.value='';
+  renderNotificationSettings();
+});
+document.getElementById('addTeamsBtn').addEventListener('click', ()=>{
+  const nameInp = document.getElementById('newTeamsName'), urlInp = document.getElementById('newTeamsUrl');
+  const name = nameInp.value.trim(), url = urlInp.value.trim();
+  if(!name || !url) return;
+  STATE.config.notifications.teams.webhooks.push({id:'tw-'+(notifIdCounter++), name, url});
+  nameInp.value=''; urlInp.value='';
+  renderNotificationSettings();
+});
+
+function logNotification(status, message){
+  STATE.notifLog.unshift({ time:new Date().toLocaleString(), status, message });
+  STATE.notifLog = STATE.notifLog.slice(0,20);
+  renderNotifLog();
+}
+function renderNotifLog(){
+  const el = document.getElementById('notifLog');
+  if(!el) return;
+  el.innerHTML = STATE.notifLog.length ? STATE.notifLog.map(l=>`
+    <div class="notif-log-row ${l.status==='ok'?'ok':'err'}"><span>${l.time}</span><span>${l.message}</span></div>`).join('')
+    : `<div class="notif-log-empty">No notifications sent yet.</div>`;
+}
+
+function sendTeamsMessage(webhook, text){
+  fetch(webhook.url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ text })
+  }).then(res=>{
+    logNotification(res.ok ? 'ok' : 'err', `Teams -> ${webhook.name}: HTTP ${res.status}`);
+  }).catch(err=>{
+    logNotification('err', `Teams -> ${webhook.name}: request failed (likely CORS) - ${err.message}`);
+  });
+}
+
+function sendEmailAlert(payload){
+  const n = STATE.config.notifications;
+  const recipients = n.distributionLists.flatMap(l=>l.emails);
+  if(!recipients.length){ logNotification('err', 'Email: no distribution list configured'); return; }
+  if(!n.smtp.relayEndpoint){
+    logNotification('err', `Email: no relay endpoint configured - payload ready for ${recipients.length} recipient(s), not sent`);
+    return;
+  }
+  fetch(n.smtp.relayEndpoint, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ smtp: {...n.smtp, password: n.smtp.password ? '***' : ''}, to: recipients, ...payload })
+  }).then(res=>{
+    logNotification(res.ok ? 'ok' : 'err', `Email -> ${recipients.length} recipient(s): HTTP ${res.status}`);
+  }).catch(err=>{
+    logNotification('err', `Email -> relay endpoint unreachable - ${err.message}`);
+  });
+}
+
+document.getElementById('testEmailBtn').addEventListener('click', ()=>{
+  sendEmailAlert({ subject:'[SVL-071] Test alert', body:'This is a test alert from the SVL-071 Reconciliation Console.' });
+});
+
+function maybeSendBreakNotifications(){
+  const n = STATE.config.notifications;
+  if(!n.enabled) return;
+  const t = overallTotals();
+  const rate = t.totalSource ? (t.totalBreaks / t.totalSource * 100) : 0;
+  if(rate < n.breakRateThreshold) return;
+  const subject = `[SVL-071] Break rate ${rate.toFixed(2)}% exceeds threshold ${n.breakRateThreshold}%`;
+  const body = `${t.totalBreaks.toLocaleString()} breaks out of ${t.totalSource.toLocaleString()} source records across ETD/OTC/NON-OTC.`;
+  sendEmailAlert({ subject, body });
+  n.teams.webhooks.forEach(w=> sendTeamsMessage(w, subject+' — '+body));
+}
+
+/* ---- import / export settings JSON ---- */
+function exportSettingsJSON(){
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    theme: STATE.config.theme,
+    labels: STATE.config.labels,
+    breakFields: STATE.config.breakFields,
+    drillFields: STATE.config.drillFields,
+    csvSchemas: STATE.config.csvSchemas,
+    notifications: STATE.config.notifications
+  };
+  downloadFile('svl071-console-settings.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8;');
+}
+document.getElementById('exportSettingsBtn').addEventListener('click', exportSettingsJSON);
+
+document.getElementById('importSettingsInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const status = document.getElementById('settingsImportStatus');
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    try{
+      const parsed = JSON.parse(ev.target.result);
+      if(parsed.theme) STATE.config.theme = { ...cloneDeep(DEFAULT_THEME), ...parsed.theme };
+      if(parsed.labels) STATE.config.labels = { ...cloneDeep(DEFAULT_LABELS), ...parsed.labels };
+      if(parsed.breakFields) STATE.config.breakFields = parsed.breakFields;
+      if(parsed.drillFields) STATE.config.drillFields = parsed.drillFields;
+      if(parsed.csvSchemas) STATE.config.csvSchemas = parsed.csvSchemas;
+      if(parsed.notifications) STATE.config.notifications = { ...cloneDeep(DEFAULT_NOTIFICATIONS), ...parsed.notifications };
+      Object.keys(STATE.config.csvSchemas).forEach(k=>{ if(!STATE.data[k]) STATE.data[k]=[]; });
+      applyTheme(); applyLabels();
+      renderSettingsTab(); renderBreaksTab(); renderDrillTab(); renderLoaderTab(); renderOverview();
+      status.style.display='block';
+      status.textContent = 'Settings imported successfully from '+file.name+' at '+new Date().toLocaleString()+'.';
+    }catch(err){
+      status.style.display='block';
+      status.textContent = 'Could not import '+file.name+': '+err.message;
+    }
+  };
+  reader.readAsText(file);
+});
+
+/* ---------------------------------------------------------------
+   13. TABS / WIRING / INIT
+   --------------------------------------------------------------- */
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=> p.classList.toggle('active', p.id==='tab-'+name));
+}
+document.getElementById('tabBar').addEventListener('click', (e)=>{
+  const btn = e.target.closest('.tab-btn');
+  if(!btn) return;
+  switchTab(btn.dataset.tab);
+  if(btn.dataset.tab==='breaks') renderBreaksTab();
+  if(btn.dataset.tab==='drilldown') renderDrillTab();
+  if(btn.dataset.tab==='settings') renderSettingsTab();
+});
+
+document.getElementById('lineageFlowFilter').addEventListener('change', (e)=>{
+  STATE.lineageFlowFilter = e.target.value;
+  document.getElementById('nodeDetailPanel').style.display='none';
+  renderLineage();
+});
+document.getElementById('stageFlowFilter').addEventListener('change', (e)=>{
+  STATE.stageFlowFilter = e.target.value;
+  renderStageControls();
+});
+
+document.getElementById('breakSearch').addEventListener('input', (e)=>{ STATE.breaks.search=e.target.value; STATE.breaks.page=1; renderBreaksTab(); });
+document.getElementById('breakStageFilter').addEventListener('change', (e)=>{ STATE.breaks.stage=e.target.value; STATE.breaks.page=1; renderBreaksTab(); });
+document.getElementById('breakFlowFilter').addEventListener('change', (e)=>{ STATE.breaks.flow=e.target.value; STATE.breaks.page=1; renderBreaksTab(); });
+document.getElementById('breakTypeFilter').addEventListener('change', (e)=>{ STATE.breaks.type=e.target.value; STATE.breaks.page=1; renderBreaksTab(); });
+document.getElementById('clearBreakFilters').addEventListener('click', ()=>{
+  STATE.breaks = {...STATE.breaks, search:'', stage:'ALL', flow:'ALL', type:'ALL', page:1};
+  document.getElementById('breakSearch').value='';
+  document.getElementById('breakFlowFilter').value='ALL';
+  renderBreaksTab();
+});
+document.getElementById('exportBreaksBtn').addEventListener('click', exportFilteredBreaksCSV);
+
+document.getElementById('drillSearch').addEventListener('input', (e)=>{ STATE.drill.search=e.target.value; STATE.drill.page=1; renderDrillTab(); });
+document.getElementById('drillStatusFilter').addEventListener('change', (e)=>{ STATE.drill.status=e.target.value; STATE.drill.page=1; renderDrillTab(); });
+document.getElementById('drillSourceFilter').addEventListener('change', (e)=>{ STATE.drill.source=e.target.value; STATE.drill.page=1; renderDrillTab(); });
+
+document.getElementById('loadDemoBtn').addEventListener('click', loadAllFromSample);
+document.getElementById('clearDataBtn').addEventListener('click', clearAllData);
+
+function renderAll(){
+  renderOverview();
+  renderLineage();
+  renderStageControls();
+  renderBreaksTab();
+  renderDrillTab();
+  renderLoaderTab();
+  renderSettingsTab();
+}
+
+function tickClock(){
+  document.getElementById('runClock').textContent = 'Rendered ' + new Date().toLocaleString();
+  document.getElementById('footStamp').textContent = new Date().getFullYear() + ' &middot; internal use only'.replace('&middot;','·');
+}
+tickClock();
+setInterval(tickClock, 60000);
+
+applyTheme();
+applyLabels();
+loadAllFromSample();
+</script>
+</body>
+</html>
