@@ -1,0 +1,603 @@
+/*
+    Schema & Metadata Comparison Report
+    Targeted for SQL Server 2008 R2 -> SQL Server 2022 ETL migration validation
+
+    Purpose:
+    - Produce a row-level, comparison-friendly metadata extract.
+    - Designed to be executed on SOURCE and TARGET databases and then compared via JOIN / EXCEPT.
+    - Focuses on ETL/SSIS-sensitive objects: tables, columns, indexes, views, procs/functions, users/roles, synonyms.
+
+    Usage:
+    - Change @SchemaName to your scope schema, e.g. 'dbo' or 'ETL'.
+    - Execute on both SOURCE and TARGET databases.
+    - Compare results using:
+        SELECT * FROM SourceResult
+        EXCEPT
+        SELECT * FROM TargetResult
+      and the reverse.
+
+    Notes:
+    - Some metadata in older versions may be incomplete depending on permissions and object type.
+    - Definition text for modules requires VIEW DEFINITION permission.
+    - For encrypted modules, definition will be NULL.
+*/
+
+SET NOCOUNT ON;
+
+DECLARE @SchemaName sysname = N'dbo';   -- << change as needed
+DECLARE @IncludeSystemObjects bit = 0;   -- set to 1 only if you truly want system objects
+
+;WITH
+/*------------------------------------------------------------
+  1) Base schema filter
+  Critical because migration comparisons should be scoped
+  tightly to the ETL/application schema and not polluted by
+  unrelated objects.
+------------------------------------------------------------*/
+SchemaCTE AS (
+    SELECT s.schema_id, s.name AS Schema_Name
+    FROM sys.schemas s
+    WHERE s.name = @SchemaName
+),
+
+/*------------------------------------------------------------
+  2) Tables + Columns
+  Critical for SSIS data flow validation:
+  - data type drift (varchar -> nvarchar)
+  - precision/scale changes
+  - nullability changes
+  - identity changes
+  - default constraint loss
+  - collation drift
+  - filegroup placement for load/performance regression checks
+------------------------------------------------------------*/
+TableColumnsCTE AS (
+    SELECT
+        CAST('TABLE_COLUMN' AS varchar(30)) AS Object_Class,
+        CAST(t.object_id AS varchar(20)) AS Object_GUID,   -- stable enough for one DB snapshot; compare by composite key across DBs
+        SCHEMA_NAME(t.schema_id) AS Schema_Name,
+        t.name AS Object_Name,
+        c.column_id AS Ordinal_Position,
+        c.name AS Column_Name,
+        TYPE_NAME(c.user_type_id) AS Data_Type,
+        c.max_length AS Max_Length,
+        c.precision AS Precision_Value,
+        c.scale AS Scale_Value,
+        c.is_nullable AS Is_Nullable,
+        c.is_identity AS Is_Identity,
+        COALESCE(dc.name, N'') AS Default_Constraint_Name,
+        COALESCE(OBJECT_DEFINITION(dc.object_id), N'') AS Default_Constraint_Definition,
+        COALESCE(c.collation_name, N'') AS Collation_Name,
+        CASE WHEN t.lob_data_space_id IS NOT NULL THEN
+            COALESCE(ds.name, N'')
+        ELSE
+            COALESCE(ds.name, N'')
+        END AS Filegroup_Name,
+        CASE WHEN c.is_computed = 1 THEN 1 ELSE 0 END AS Is_Computed,
+        COALESCE(cc.definition, N'') AS Computed_Column_Definition,
+        COALESCE(CONVERT(varchar(128), COLUMNPROPERTY(t.object_id, c.name, 'IsDeterministic')), '') AS Is_Deterministic,
+        COALESCE(CONVERT(varchar(128), COLUMNPROPERTY(t.object_id, c.name, 'IsPrecise')), '') AS Is_Precise
+    FROM sys.tables t
+    INNER JOIN SchemaCTE s
+        ON s.schema_id = t.schema_id
+    INNER JOIN sys.columns c
+        ON c.object_id = t.object_id
+    LEFT JOIN sys.default_constraints dc
+        ON dc.parent_object_id = c.object_id
+       AND dc.parent_column_id = c.column_id
+    LEFT JOIN sys.computed_columns cc
+        ON cc.object_id = c.object_id
+       AND cc.column_id = c.column_id
+    LEFT JOIN sys.data_spaces ds
+        ON ds.data_space_id = t.lob_data_space_id
+    WHERE (@IncludeSystemObjects = 1 OR t.is_ms_shipped = 0)
+),
+
+/*------------------------------------------------------------
+  3) Indexes
+  Critical for SSIS performance and migration parity:
+  - clustered/nonclustered changes
+  - uniqueness changes
+  - included columns
+  - filtered indexes
+  - filegroup placement
+------------------------------------------------------------*/
+IndexesCTE AS (
+    SELECT
+        CAST('INDEX' AS varchar(30)) AS Object_Class,
+        CAST(i.object_id AS varchar(20)) AS Object_GUID,
+        SCHEMA_NAME(t.schema_id) AS Schema_Name,
+        t.name AS Object_Name,
+        i.index_id AS Ordinal_Position,
+        i.name AS Index_Name,
+        CASE i.type
+            WHEN 1 THEN 'CLUSTERED'
+            WHEN 2 THEN 'NONCLUSTERED'
+            WHEN 3 THEN 'XML'
+            WHEN 4 THEN 'SPATIAL'
+            WHEN 5 THEN 'CLUSTERED COLUMNSTORE'
+            WHEN 6 THEN 'NONCLUSTERED COLUMNSTORE'
+            ELSE 'OTHER'
+        END AS Index_Type,
+        i.is_unique AS Is_Unique,
+        i.is_primary_key AS Is_Primary_Key,
+        i.is_unique_constraint AS Is_Unique_Constraint,
+        COALESCE(ds.name, N'') AS Filegroup_Name,
+        COALESCE(i.filter_definition, N'') AS Filter_Definition,
+        STUFF((
+            SELECT N',' + QUOTENAME(c2.name)
+            FROM sys.index_columns ic2
+            INNER JOIN sys.columns c2
+                ON c2.object_id = ic2.object_id
+               AND c2.column_id = ic2.column_id
+            WHERE ic2.object_id = i.object_id
+              AND ic2.index_id = i.index_id
+              AND ic2.is_included_column = 0
+            ORDER BY ic2.key_ordinal
+            FOR XML PATH(''), TYPE
+        ).value('.', 'nvarchar(max)'), 1, 1, N'') AS Key_Columns,
+        STUFF((
+            SELECT N',' + QUOTENAME(c2.name)
+            FROM sys.index_columns ic2
+            INNER JOIN sys.columns c2
+                ON c2.object_id = ic2.object_id
+               AND c2.column_id = ic2.column_id
+            WHERE ic2.object_id = i.object_id
+              AND ic2.index_id = i.index_id
+              AND ic2.is_included_column = 1
+            ORDER BY c2.column_id
+            FOR XML PATH(''), TYPE
+        ).value('.', 'nvarchar(max)'), 1, 1, N'') AS Included_Columns
+    FROM sys.indexes i
+    INNER JOIN sys.tables t
+        ON t.object_id = i.object_id
+    INNER JOIN SchemaCTE s
+        ON s.schema_id = t.schema_id
+    LEFT JOIN sys.data_spaces ds
+        ON ds.data_space_id = i.data_space_id
+    WHERE i.index_id > 0
+      AND (@IncludeSystemObjects = 1 OR t.is_ms_shipped = 0)
+),
+
+/*------------------------------------------------------------
+  4) Views
+  Critical for SSIS because upstream transformations often
+  depend on view shape, schema binding, and dependencies.
+------------------------------------------------------------*/
+ViewsCTE AS (
+    SELECT
+        CAST('VIEW' AS varchar(30)) AS Object_Class,
+        CAST(v.object_id AS varchar(20)) AS Object_GUID,
+        SCHEMA_NAME(v.schema_id) AS Schema_Name,
+        v.name AS Object_Name,
+        0 AS Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        CAST(NULL AS sysname) AS Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        COALESCE(m.definition, N'') AS Definition_Text,
+        v.is_schema_bound AS Is_Schema_Bound,
+        COALESCE((
+            SELECT STUFF((
+                SELECT N',' + QUOTENAME(SCHEMA_NAME(o2.schema_id)) + N'.' + QUOTENAME(o2.name)
+                FROM sys.sql_expression_dependencies sed
+                INNER JOIN sys.objects o2
+                    ON o2.object_id = sed.referenced_id
+                WHERE sed.referencing_id = v.object_id
+                  AND o2.type IN ('U','V')
+                FOR XML PATH(''), TYPE
+            ).value('.', 'nvarchar(max)'), 1, 1, N'')
+        ), N'') AS Dependent_Tables
+    FROM sys.views v
+    INNER JOIN SchemaCTE s
+        ON s.schema_id = v.schema_id
+    LEFT JOIN sys.sql_modules m
+        ON m.object_id = v.object_id
+    WHERE (@IncludeSystemObjects = 1 OR v.is_ms_shipped = 0)
+),
+
+/*------------------------------------------------------------
+  5) Stored Procedures + Functions
+  Critical for ETL because parameter contracts and module text
+  often drive dynamic loads, validation logic, and orchestration.
+------------------------------------------------------------*/
+ModulesCTE AS (
+    SELECT
+        CAST(CASE o.type
+             WHEN 'P' THEN 'STORED_PROCEDURE'
+             WHEN 'FN' THEN 'SCALAR_FUNCTION'
+             WHEN 'TF' THEN 'TABLE_FUNCTION'
+             WHEN 'IF' THEN 'INLINE_TABLE_FUNCTION'
+             WHEN 'AF' THEN 'AGGREGATE_FUNCTION'
+             ELSE o.type_desc
+        END AS varchar(30)) AS Object_Class,
+        CAST(o.object_id AS varchar(20)) AS Object_GUID,
+        SCHEMA_NAME(o.schema_id) AS Schema_Name,
+        o.name AS Object_Name,
+        0 AS Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        CAST(NULL AS sysname) AS Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        COALESCE(m.definition, N'') AS Definition_Text,
+        COALESCE((
+            SELECT STUFF((
+                SELECT
+                    N';' + p.name + N' ' +
+                    UPPER(TYPE_NAME(p.user_type_id)) +
+                    CASE
+                        WHEN TYPE_NAME(p.user_type_id) IN ('varchar','char','varbinary','binary','nvarchar','nchar')
+                            THEN N'(' + CASE WHEN p.max_length = -1 THEN N'MAX'
+                                             WHEN TYPE_NAME(p.user_type_id) IN ('nvarchar','nchar')
+                                                  THEN CONVERT(varchar(10), p.max_length / 2)
+                                             ELSE CONVERT(varchar(10), p.max_length)
+                                        END + N')'
+                        WHEN TYPE_NAME(p.user_type_id) IN ('decimal','numeric')
+                            THEN N'(' + CONVERT(varchar(10), p.precision) + N',' + CONVERT(varchar(10), p.scale) + N')'
+                        ELSE N''
+                    END +
+                    CASE WHEN p.is_output = 1 THEN N' OUTPUT' ELSE N'' END
+                FROM sys.parameters p
+                WHERE p.object_id = o.object_id
+                ORDER BY p.parameter_id
+                FOR XML PATH(''), TYPE
+            ).value('.', 'nvarchar(max)'), 1, 1, N'')
+        ), N'') AS Parameter_List
+    FROM sys.objects o
+    INNER JOIN SchemaCTE s
+        ON s.schema_id = o.schema_id
+    LEFT JOIN sys.sql_modules m
+        ON m.object_id = o.object_id
+    WHERE o.type IN ('P','FN','TF','IF','AF')
+      AND (@IncludeSystemObjects = 1 OR o.is_ms_shipped = 0)
+),
+
+/*------------------------------------------------------------
+  6) Users + Roles
+  Critical for SSIS connections, proxy execution, and security
+  drift validation across environments.
+------------------------------------------------------------*/
+UsersRolesCTE AS (
+    SELECT
+        CAST('USER_ROLE' AS varchar(30)) AS Object_Class,
+        CAST(dp.principal_id AS varchar(20)) AS Object_GUID,
+        SCHEMA_NAME() AS Schema_Name,
+        dp.name AS Object_Name,
+        0 AS Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        CAST(NULL AS sysname) AS Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        CAST(NULL AS nvarchar(max)) AS Definition_Text,
+        CAST(NULL AS bit) AS Is_Schema_Bound,
+        COALESCE(dp.default_schema_name, N'') AS Default_Schema,
+        COALESCE((
+            SELECT STUFF((
+                SELECT N',' + QUOTENAME(rp.name)
+                FROM sys.database_role_members drm
+                INNER JOIN sys.database_principals rp
+                    ON rp.principal_id = drm.role_principal_id
+                WHERE drm.member_principal_id = dp.principal_id
+                ORDER BY rp.name
+                FOR XML PATH(''), TYPE
+            ).value('.', 'nvarchar(max)'), 1, 1, N'')
+        ), N'') AS Role_Memberships
+    FROM sys.database_principals dp
+    WHERE dp.type IN ('S','U','G','E','X','C')  -- SQL user, Windows user/group, external, cert-mapped, etc.
+      AND dp.principal_id > 0
+      AND dp.name NOT IN ('dbo','guest','INFORMATION_SCHEMA','sys')
+),
+
+/*------------------------------------------------------------
+  7) Synonyms
+  Critical when SSIS or application code uses abstraction over
+  physical object names; base object drift is a common silent failure.
+------------------------------------------------------------*/
+SynonymsCTE AS (
+    SELECT
+        CAST('SYNONYM' AS varchar(30)) AS Object_Class,
+        CAST(sn.object_id AS varchar(20)) AS Object_GUID,
+        SCHEMA_NAME(sn.schema_id) AS Schema_Name,
+        sn.name AS Object_Name,
+        0 AS Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        CAST(NULL AS sysname) AS Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        CAST(NULL AS nvarchar(max)) AS Definition_Text,
+        CAST(NULL AS bit) AS Is_Schema_Bound,
+        COALESCE(sn.base_object_name, N'') AS Base_Object,
+        CAST(NULL AS nvarchar(max)) AS Parameter_List
+    FROM sys.synonyms sn
+    INNER JOIN SchemaCTE s
+        ON s.schema_id = sn.schema_id
+),
+
+/*------------------------------------------------------------
+  8) Unified output
+  Shaped for easy comparison with UNION ALL and predictable
+  ordering. NULLs are normalized to empty strings for text
+  columns where silent mismatch is common.
+------------------------------------------------------------*/
+Unified AS (
+    SELECT
+        Object_Class,
+        Object_GUID,
+        Schema_Name,
+        Object_Name,
+        Ordinal_Position,
+        Column_Name,
+        Data_Type,
+        Max_Length,
+        Precision_Value,
+        Scale_Value,
+        Is_Nullable,
+        Is_Identity,
+        Default_Constraint_Name,
+        Default_Constraint_Definition,
+        Collation_Name,
+        Filegroup_Name,
+        Is_Computed,
+        Computed_Column_Definition,
+        Is_Deterministic,
+        Is_Precise,
+        CAST(NULL AS nvarchar(max)) AS Definition_Text,
+        CAST(NULL AS bit) AS Is_Schema_Bound,
+        CAST(NULL AS nvarchar(max)) AS Dependent_Tables,
+        CAST(NULL AS sysname) AS Default_Schema,
+        CAST(NULL AS nvarchar(max)) AS Role_Memberships,
+        CAST(NULL AS sysname) AS Base_Object,
+        CAST(NULL AS nvarchar(max)) AS Parameter_List
+    FROM TableColumnsCTE
+
+    UNION ALL
+
+    SELECT
+        Object_Class,
+        Object_GUID,
+        Schema_Name,
+        Object_Name,
+        Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        CAST(NULL AS nvarchar(max)) AS Definition_Text,
+        CAST(NULL AS bit) AS Is_Schema_Bound,
+        CAST(NULL AS nvarchar(max)) AS Dependent_Tables,
+        CAST(NULL AS sysname) AS Default_Schema,
+        CAST(NULL AS nvarchar(max)) AS Role_Memberships,
+        CAST(NULL AS sysname) AS Base_Object,
+        CAST(NULL AS nvarchar(max)) AS Parameter_List
+    FROM IndexesCTE
+
+    UNION ALL
+
+    SELECT
+        Object_Class,
+        Object_GUID,
+        Schema_Name,
+        Object_Name,
+        Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        CAST(NULL AS sysname) AS Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        Definition_Text,
+        Is_Schema_Bound,
+        Dependent_Tables,
+        CAST(NULL AS sysname) AS Default_Schema,
+        CAST(NULL AS nvarchar(max)) AS Role_Memberships,
+        CAST(NULL AS sysname) AS Base_Object,
+        CAST(NULL AS nvarchar(max)) AS Parameter_List
+    FROM ViewsCTE
+
+    UNION ALL
+
+    SELECT
+        Object_Class,
+        Object_GUID,
+        Schema_Name,
+        Object_Name,
+        Ordinal_Position,
+        Column_Name,
+        Data_Type,
+        Max_Length,
+        Precision_Value,
+        Scale_Value,
+        Is_Nullable,
+        Is_Identity,
+        Default_Constraint_Name,
+        Default_Constraint_Definition,
+        Collation_Name,
+        Filegroup_Name,
+        Is_Computed,
+        Computed_Column_Definition,
+        Is_Deterministic,
+        Is_Precise,
+        Definition_Text,
+        CAST(NULL AS bit) AS Is_Schema_Bound,
+        CAST(NULL AS nvarchar(max)) AS Dependent_Tables,
+        CAST(NULL AS sysname) AS Default_Schema,
+        CAST(NULL AS nvarchar(max)) AS Role_Memberships,
+        CAST(NULL AS sysname) AS Base_Object,
+        Parameter_List
+    FROM ModulesCTE
+
+    UNION ALL
+
+    SELECT
+        Object_Class,
+        Object_GUID,
+        Schema_Name,
+        Object_Name,
+        Ordinal_Position,
+        Column_Name,
+        Data_Type,
+        Max_Length,
+        Precision_Value,
+        Scale_Value,
+        Is_Nullable,
+        Is_Identity,
+        Default_Constraint_Name,
+        Default_Constraint_Definition,
+        Collation_Name,
+        Filegroup_Name,
+        Is_Computed,
+        Computed_Column_Definition,
+        Is_Deterministic,
+        Is_Precise,
+        Definition_Text,
+        Is_Schema_Bound,
+        CAST(NULL AS nvarchar(max)) AS Dependent_Tables,
+        Default_Schema,
+        Role_Memberships,
+        CAST(NULL AS sysname) AS Base_Object,
+        CAST(NULL AS nvarchar(max)) AS Parameter_List
+    FROM UsersRolesCTE
+
+    UNION ALL
+
+    SELECT
+        Object_Class,
+        Object_GUID,
+        Schema_Name,
+        Object_Name,
+        Ordinal_Position,
+        CAST(NULL AS sysname) AS Column_Name,
+        CAST(NULL AS varchar(128)) AS Data_Type,
+        CAST(NULL AS int) AS Max_Length,
+        CAST(NULL AS tinyint) AS Precision_Value,
+        CAST(NULL AS tinyint) AS Scale_Value,
+        CAST(NULL AS bit) AS Is_Nullable,
+        CAST(NULL AS bit) AS Is_Identity,
+        CAST(NULL AS sysname) AS Default_Constraint_Name,
+        CAST(NULL AS nvarchar(max)) AS Default_Constraint_Definition,
+        CAST(NULL AS nvarchar(128)) AS Collation_Name,
+        CAST(NULL AS sysname) AS Filegroup_Name,
+        CAST(NULL AS bit) AS Is_Computed,
+        CAST(NULL AS nvarchar(max)) AS Computed_Column_Definition,
+        CAST(NULL AS varchar(128)) AS Is_Deterministic,
+        CAST(NULL AS varchar(128)) AS Is_Precise,
+        CAST(NULL AS nvarchar(max)) AS Definition_Text,
+        CAST(NULL AS bit) AS Is_Schema_Bound,
+        CAST(NULL AS nvarchar(max)) AS Dependent_Tables,
+        CAST(NULL AS sysname) AS Default_Schema,
+        CAST(NULL AS nvarchar(max)) AS Role_Memberships,
+        Base_Object,
+        CAST(NULL AS nvarchar(max)) AS Parameter_List
+    FROM SynonymsCTE
+)
+SELECT
+    Object_Class,
+    Object_GUID,
+    Schema_Name,
+    Object_Name,
+    Ordinal_Position,
+    Column_Name,
+    Data_Type,
+    Max_Length,
+    Precision_Value,
+    Scale_Value,
+    Is_Nullable,
+    Is_Identity,
+    Default_Constraint_Name,
+    Default_Constraint_Definition,
+    Collation_Name,
+    Filegroup_Name,
+    Is_Computed,
+    Computed_Column_Definition,
+    Is_Deterministic,
+    Is_Precise,
+    Definition_Text,
+    Is_Schema_Bound,
+    Dependent_Tables,
+    Default_Schema,
+    Role_Memberships,
+    Base_Object,
+    Parameter_List
+FROM Unified
+WHERE Schema_Name = @SchemaName
+ORDER BY
+    CASE Object_Class
+        WHEN 'TABLE_COLUMN' THEN 1
+        WHEN 'INDEX' THEN 2
+        WHEN 'VIEW' THEN 3
+        WHEN 'STORED_PROCEDURE' THEN 4
+        WHEN 'SCALAR_FUNCTION' THEN 5
+        WHEN 'TABLE_FUNCTION' THEN 6
+        WHEN 'INLINE_TABLE_FUNCTION' THEN 7
+        WHEN 'AGGREGATE_FUNCTION' THEN 8
+        WHEN 'USER_ROLE' THEN 9
+        WHEN 'SYNONYM' THEN 10
+        ELSE 99
+    END,
+    Object_Name,
+    Ordinal_Position,
+    Column_Name;
