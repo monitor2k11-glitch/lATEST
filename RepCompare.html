@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Schema & Metadata Comparison Dashboard</title>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --panel:#111a2e;
+      --panel2:#16233b;
+      --text:#e8eefc;
+      --muted:#9fb0d0;
+      --border:#253656;
+      --accent:#6ea8fe;
+      --good:#33d69f;
+      --warn:#ffb84d;
+      --bad:#ff6b6b;
+      --info:#7dd3fc;
+      --shadow: 0 10px 30px rgba(0,0,0,.25);
+      --radius: 16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background:linear-gradient(180deg,#08101d 0%, #0b1220 100%);
+      color:var(--text);
+    }
+    header{
+      padding:20px 24px 8px;
+      border-bottom:1px solid var(--border);
+      background:rgba(10,16,30,.85);
+      position:sticky; top:0; z-index:10; backdrop-filter: blur(10px);
+    }
+    h1{margin:0 0 6px;font-size:22px}
+    .sub{color:var(--muted);font-size:13px;line-height:1.4}
+    .wrap{padding:18px 18px 28px;max-width:1800px;margin:0 auto}
+    .toolbar, .kpis, .grid, .filters{display:grid;gap:12px}
+    .toolbar{grid-template-columns: 1.4fr 1.4fr 1fr 1fr 1fr; align-items:end; margin-bottom:12px}
+    .filters{grid-template-columns: repeat(5, minmax(0,1fr)); margin-bottom:12px}
+    .card{
+      background:linear-gradient(180deg,var(--panel),var(--panel2));
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+    }
+    .card.pad{padding:14px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input[type="file"], select, input[type="search"], button{
+      width:100%;
+      border:1px solid var(--border);
+      background:#0d1628;
+      color:var(--text);
+      border-radius:12px;
+      padding:10px 12px;
+      font:inherit;
+    }
+    button{cursor:pointer}
+    button.primary{background:linear-gradient(180deg,#2d6cdf,#1f56bf);border-color:#2d6cdf}
+    button.ghost{background:#0d1628}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .kpis{grid-template-columns: repeat(6, minmax(0,1fr)); margin-bottom:12px}
+    .kpi{padding:16px}
+    .kpi .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .kpi .value{font-size:28px;font-weight:700;line-height:1.1}
+    .kpi .delta{font-size:12px;color:var(--muted);margin-top:6px}
+    .good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)} .info{color:var(--info)}
+    .grid{
+      grid-template-columns: 1.1fr .9fr;
+      margin-top:12px;
+    }
+    .grid2{
+      display:grid;grid-template-columns:1.1fr .9fr;gap:12px;
+    }
+    .section-title{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 14px 0;
+    }
+    .section-title h2{font-size:16px;margin:0}
+    .section-title .meta{color:var(--muted);font-size:12px}
+    .chart-box{padding:12px 14px 16px}
+    canvas{max-width:100%}
+    .table-wrap{overflow:auto;max-height:540px;border-top:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th,td{padding:10px 10px;border-bottom:1px solid #20304c;vertical-align:top;text-align:left}
+    th{
+      position:sticky;top:0;background:#111a2e;z-index:2;
+      cursor:pointer;white-space:nowrap;
+    }
+    tr:hover td{background:#0d1628}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);background:#0d1628}
+    .pill.added{color:var(--good)}
+    .pill.removed{color:var(--bad)}
+    .pill.changed{color:var(--warn)}
+    .mono{font-family:var(--mono)}
+    .small{font-size:11px;color:var(--muted)}
+    .status{padding:12px 14px;color:var(--muted);font-size:12px;border-top:1px solid var(--border)}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .list{padding:12px 14px 16px}
+    .list ul{margin:0;padding-left:18px}
+    .list li{margin:6px 0;color:var(--text);font-size:13px}
+    .footer-actions{
+      display:flex;gap:10px;flex-wrap:wrap;padding:12px 14px 14px;border-top:1px solid var(--border)
+    }
+    .legend{display:flex;gap:10px;flex-wrap:wrap}
+    .legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .dot.good{background:var(--good)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)} .dot.info{background:var(--info)}
+    @media (max-width: 1200px){
+      .toolbar,.filters,.kpis,.grid,.grid2,.two-col{grid-template-columns:1fr 1fr}
+    }
+    @media (max-width: 760px){
+      .toolbar,.filters,.kpis,.grid,.grid2,.two-col{grid-template-columns:1fr}
+      header{position:static}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Schema & Metadata Comparison Dashboard</h1>
+  <div class="sub">
+    Load two exported metadata reports from source and target databases, compare schema drift, surface silent migrations, and export findings.
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="toolbar">
+    <div class="card pad">
+      <label>Source report file</label>
+      <input id="sourceFile" type="file" accept=".csv,.tsv,.txt,.json" />
+    </div>
+    <div class="card pad">
+      <label>Target report file</label>
+      <input id="targetFile" type="file" accept=".csv,.tsv,.txt,.json" />
+    </div>
+    <div class="card pad">
+      <label>Source name</label>
+      <input id="sourceName" type="text" value="Source" />
+    </div>
+    <div class="card pad">
+      <label>Target name</label>
+      <input id="targetName" type="text" value="Target" />
+    </div>
+    <div class="card pad">
+      <label>&nbsp;</label>
+      <button class="primary" id="compareBtn">Compare reports</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <div class="card pad">
+      <label>Object class</label>
+      <select id="classFilter"><option value="">All</option></select>
+    </div>
+    <div class="card pad">
+      <label>Change type</label>
+      <select id="changeFilter">
+        <option value="">All</option>
+        <option value="Added">Added</option>
+        <option value="Removed">Removed</option>
+        <option value="Changed">Changed</option>
+        <option value="Unchanged">Unchanged</option>
+      </select>
+    </div>
+    <div class="card pad">
+      <label>Schema</label>
+      <select id="schemaFilter"><option value="">All</option></select>
+    </div>
+    <div class="card pad">
+      <label>Search</label>
+      <input id="searchBox" type="search" placeholder="Search object, column, type, default..." />
+    </div>
+    <div class="card pad">
+      <label>Actions</label>
+      <button class="ghost" id="exportCsvBtn">Export diff CSV</button>
+    </div>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="section-title">
+        <h2>Drift overview</h2>
+        <div class="meta" id="summaryMeta">Waiting for files…</div>
+      </div>
+      <div class="chart-box">
+        <canvas id="driftChart" height="160"></canvas>
+      </div>
+      <div class="status" id="statusMsg">Load both files, then compare.</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">
+        <h2>Silent migration risks</h2>
+        <div class="meta">High-value issues for SSIS validation</div>
+      </div>
+      <div class="list" id="riskList">
+        <div class="small">No comparison yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:12px;">
+    <div class="card">
+      <div class="section-title">
+        <h2>Object category breakdown</h2>
+        <div class="meta">Counts by object class and change type</div>
+      </div>
+      <div class="chart-box">
+        <canvas id="categoryChart" height="180"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">
+        <h2>Top differences</h2>
+        <div class="meta">Most important mismatches</div>
+      </div>
+      <div class="table-wrap">
+        <table id="diffTable">
+          <thead>
+            <tr>
+              <th data-key="ChangeType">Change</th>
+              <th data-key="Object_Class">Class</th>
+              <th data-key="Schema_Name">Schema</th>
+              <th data-key="Object_Name">Object</th>
+              <th data-key="Column_Name">Column</th>
+              <th data-key="Field">Field</th>
+              <th data-key="SourceValue">Source</th>
+              <th data-key="TargetValue">Target</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="footer-actions">
+        <button class="ghost" id="showAllBtn">Show all</button>
+        <button class="ghost" id="showOnlyDriftBtn">Show drift only</button>
+        <button class="ghost" id="downloadJsonBtn">Export full JSON</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let sourceRows = [], targetRows = [], comparison = [];
+let filtered = [];
+let sortState = { key: 'ChangeType', asc: true };
+let driftChart, categoryChart;
+
+const norm = v => (v === null || v === undefined ? '' : String(v).trim());
+const keyOf = r => [
+  norm(r.Schema_Name), norm(r.Object_Class), norm(r.Object_Name),
+  norm(r.Column_Name), norm(r.Index_Name), norm(r.Default_Schema),
+  norm(r.Base_Object), norm(r.Ordinal_Position)
+].join('|');
+
+function parseCSV(text) {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim().length);
+  if (!lines.length) return [];
+  const delim = lines[0].includes('\t') ? '\t' : ',';
+  const headers = splitLine(lines[0], delim);
+  return lines.slice(1).map(line => {
+    const vals = splitLine(line, delim);
+    const obj = {};
+    headers.forEach((h,i)=> obj[h.trim()] = vals[i] ?? '');
+    return obj;
+  });
+}
+
+function splitLine(line, delim) {
+  const out = [];
+  let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (q && line[i+1] === '"') { cur += '"'; i++; }
+      else q = !q;
+    } else if (ch === delim && !q) {
+      out.push(cur); cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const txt = r.result;
+      try {
+        if (file.name.toLowerCase().endsWith('.json')) resolve(JSON.parse(txt));
+        else resolve(parseCSV(txt));
+      } catch (e) { reject(e); }
+    };
+    r.onerror = reject;
+    r.readAsText(file);
+  });
+}
+
+function normalizeRows(rows, side) {
+  return rows.map(r => ({
+    ...r,
+    _side: side,
+    Schema_Name: norm(r.Schema_Name),
+    Object_Class: norm(r.Object_Class),
+    Object_Name: norm(r.Object_Name),
+    Column_Name: norm(r.Column_Name),
+    Index_Name: norm(r.Index_Name),
+    Field: norm(r.Field),
+    ChangeType: norm(r.ChangeType),
+    Data_Type: norm(r.Data_Type),
+    Default_Constraint_Definition: norm(r.Default_Constraint_Definition),
+    Collation_Name: norm(r.Collation_Name),
+    Filegroup_Name: norm(r.Filegroup_Name),
+    Definition_Text: norm(r.Definition_Text),
+    Base_Object: norm(r.Base_Object),
+    Parameter_List: norm(r.Parameter_List),
+    Role_Memberships: norm(r.Role_Memberships)
+  }));
+}
+
+function sameValue(a, b) {
+  return norm(a) === norm(b);
+}
+
+function buildMap(rows) {
+  const m = new Map();
+  rows.forEach(r => m.set(keyOf(r), r));
+  return m;
+}
+
+function compareRows(src, tgt) {
+  const sm = buildMap(src), tm = buildMap(tgt);
+  const keys = new Set([...sm.keys(), ...tm.keys()]);
+  const out = [];
+  keys.forEach(k => {
+    const s = sm.get(k), t = tm.get(k);
+    if (s && !t) {
+      out.push(makeRow('Removed', s, null, 'Entire object/row missing on target'));
+    } else if (!s && t) {
+      out.push(makeRow('Added', null, t, 'Entire object/row missing on source'));
+    } else if (s && t) {
+      const fields = [
+        'Data_Type','Max_Length','Precision_Value','Scale_Value','Is_Nullable','Is_Identity',
+        'Default_Constraint_Name','Default_Constraint_Definition','Collation_Name','Filegroup_Name',
+        'Is_Computed','Computed_Column_Definition','Definition_Text','Is_Schema_Bound',
+        'Dependent_Tables','Default_Schema','Role_Memberships','Base_Object','Parameter_List',
+        'Index_Type','Is_Unique','Key_Columns','Included_Columns'
+      ];
+      fields.forEach(f => {
+        if (!sameValue(s[f], t[f])) out.push(makeRow('Changed', s, t, f));
+      });
+    }
+  });
+  return out;
+}
+
+function makeRow(type, s, t, field) {
+  const src = s || {};
+  const trg = t || {};
+  return {
+    ChangeType: type,
+    Object_Class: src.Object_Class || trg.Object_Class || '',
+    Schema_Name: src.Schema_Name || trg.Schema_Name || '',
+    Object_Name: src.Object_Name || trg.Object_Name || '',
+    Column_Name: src.Column_Name || trg.Column_Name || '',
+    Field: field,
+    SourceValue: src[field] ?? (type === 'Added' ? '' : '<<missing>>'),
+    TargetValue: trg[field] ?? (type === 'Removed' ? '' : '<<missing>>'),
+    SourceKey: keyOf(src),
+    TargetKey: keyOf(trg)
+  };
+}
+
+function colorFor(type) {
+  return type === 'Added' ? 'good' : type === 'Removed' ? 'bad' : type === 'Changed' ? 'warn' : 'info';
+}
+
+function updateFilters(rows) {
+  const classes = [...new Set(rows.map(r => r.Object_Class).filter(Boolean))].sort();
+  const schemas = [...new Set(rows.map(r => r.Schema_Name).filter(Boolean))].sort();
+
+  const classSel = document.getElementById('classFilter');
+  const schemaSel = document.getElementById('schemaFilter');
+  classSel.innerHTML = '<option value="">All</option>' + classes.map(x=>`<option>${escapeHtml(x)}</option>`).join('');
+  schemaSel.innerHTML = '<option value="">All</option>' + schemas.map(x=>`<option>${escapeHtml(x)}</option>`).join('');
+}
+
+function applyFilters() {
+  const c = document.getElementById('classFilter').value;
+  const ch = document.getElementById('changeFilter').value;
+  const s = document.getElementById('schemaFilter').value;
+  const q = document.getElementById('searchBox').value.toLowerCase().trim();
+
+  filtered = comparison.filter(r => {
+    const hay = [r.ChangeType,r.Object_Class,r.Schema_Name,r.Object_Name,r.Column_Name,r.Field,r.SourceValue,r.TargetValue].join(' ').toLowerCase();
+    return (!c || r.Object_Class === c) &&
+           (!ch || r.ChangeType === ch) &&
+           (!s || r.Schema_Name === s) &&
+           (!q || hay.includes(q));
+  });
+  sortAndRender();
+}
+
+function sortAndRender() {
+  const k = sortState.key, asc = sortState.asc;
+  filtered.sort((a,b) => {
+    const av = norm(a[k]), bv = norm(b[k]);
+    if (av === bv) return 0;
+    return (av > bv ? 1 : -1) * (asc ? 1 : -1);
+  });
+  renderTable();
+  renderKpis();
+  renderCharts();
+  renderRisks();
+}
+
+function renderKpis() {
+  const total = comparison.length;
+  const changed = comparison.filter(x => x.ChangeType === 'Changed').length;
+  const added = comparison.filter(x => x.ChangeType === 'Added').length;
+  const removed = comparison.filter(x => x.ChangeType === 'Removed').length;
+  const objects = [...new Set(comparison.map(x => `${x.Schema_Name}.${x.Object_Name}`))].length;
+  const critical = comparison.filter(x => /Data_Type|Default|Collation|Filegroup|Definition_Text|Parameter_List|Base_Object|Role_Memberships/i.test(x.Field)).length;
+
+  document.getElementById('kpis').innerHTML = [
+    ['Total diffs', total, 'All detected mismatches', 'info'],
+    ['Changed', changed, 'Property-level drift', 'warn'],
+    ['Added', added, 'Present only in target', 'good'],
+    ['Removed', removed, 'Present only in source', 'bad'],
+    ['Objects', objects, 'Unique objects involved', 'info'],
+    ['Critical drifts', critical, 'Likely ETL-impacting', 'bad']
+  ].map(([label,val,delta,cls]) => `
+    <div class="card kpi">
+      <div class="label">${label}</div>
+      <div class="value ${cls}">${val}</div>
+      <div class="delta">${delta}</div>
+    </div>`).join('');
+}
+
+function renderCharts() {
+  const counts = ['Added','Removed','Changed'].map(t => comparison.filter(x => x.ChangeType === t).length);
+  const classes = [...new Set(comparison.map(x => x.Object_Class || 'Unknown'))].sort();
+  const classCounts = classes.map(cls => comparison.filter(x => x.Object_Class === cls).length);
+
+  const ctx1 = document.getElementById('driftChart');
+  const ctx2 = document.getElementById('categoryChart');
+
+  if (driftChart) driftChart.destroy();
+  if (categoryChart) categoryChart.destroy();
+
+  driftChart = new Chart(ctx1, {
+    type: 'doughnut',
+    data: {
+      labels: ['Added','Removed','Changed'],
+      datasets: [{
+        data: counts,
+        backgroundColor: ['#33d69f','#ff6b6b','#ffb84d'],
+        borderColor: '#0b1220',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      plugins: { legend: { labels: { color: '#e8eefc' } } },
+      cutout: '62%'
+    }
+  });
+
+  categoryChart = new Chart(ctx2, {
+    type: 'bar',
+    data: {
+      labels: classes,
+      datasets: [{
+        label: 'Differences',
+        data: classCounts,
+        backgroundColor: '#6ea8fe'
+      }]
+    },
+    options: {
+      scales: {
+        x: { ticks: { color: '#9fb0d0' }, grid: { color: '#20304c' } },
+        y: { ticks: { color: '#9fb0d0' }, grid: { color: '#20304c' } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+
+  document.getElementById('summaryMeta').textContent =
+    `Rows compared: ${comparison.length} | Visible: ${filtered.length} | Source: ${sourceRows.length} | Target: ${targetRows.length}`;
+}
+
+function renderRisks() {
+  const riskMap = [
+    ['Data_Type', 'Data type mismatch'],
+    ['Max_Length', 'Length mismatch'],
+    ['Precision_Value', 'Precision mismatch'],
+    ['Scale_Value', 'Scale mismatch'],
+    ['Is_Nullable', 'Nullability drift'],
+    ['Default_Constraint_Definition', 'Default missing or changed'],
+    ['Collation_Name', 'Collation drift'],
+    ['Filegroup_Name', 'Filegroup drift'],
+    ['Definition_Text', 'Module/view text drift'],
+    ['Is_Schema_Bound', 'Schema binding changed'],
+    ['Dependent_Tables', 'Dependency drift'],
+    ['Role_Memberships', 'Role membership drift'],
+    ['Base_Object', 'Synonym target drift'],
+    ['Parameter_List', 'Parameter contract drift']
+  ];
+  const hits = [];
+  for (const [field, label] of riskMap) {
+    const count = comparison.filter(x => x.Field === field).length;
+    if (count) hits.push({ label, count, field });
+  }
+  const html = hits.length ? `<ul>${hits.map(h => `<li><span class="pill changed">${h.count}</span> ${escapeHtml(h.label)}</li>`).join('')}</ul>` : '<div class="small">No high-risk drift detected.</div>';
+  document.getElementById('riskList').innerHTML = html;
+}
+
+function renderTable() {
+  const tbody = document.querySelector('#diffTable tbody');
+  tbody.innerHTML = filtered.slice(0, 1500).map(r => `
+    <tr>
+      <td><span class="pill ${colorFor(r.ChangeType)}">${escapeHtml(r.ChangeType)}</span></td>
+      <td>${escapeHtml(r.Object_Class)}</td>
+      <td class="mono">${escapeHtml(r.Schema_Name)}</td>
+      <td class="mono">${escapeHtml(r.Object_Name)}</td>
+      <td class="mono">${escapeHtml(r.Column_Name)}</td>
+      <td>${escapeHtml(r.Field)}</td>
+      <td class="mono">${escapeHtml(String(r.SourceValue))}</td>
+      <td class="mono">${escapeHtml(String(r.TargetValue))}</td>
+    </tr>`).join('');
+  document.getElementById('statusMsg').textContent =
+    `${filtered.length} rows matched current filters${filtered.length > 1500 ? ' (showing first 1500)' : ''}.`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function exportCSV(rows) {
+  const cols = ['ChangeType','Object_Class','Schema_Name','Object_Name','Column_Name','Field','SourceValue','TargetValue'];
+  const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => `"${String(r[c] ?? '').replace(/"/g,'""')}"`).join(','))).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'schema_comparison_report.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportJSON(rows) {
+  const blob = new Blob([JSON.stringify(rows, null, 2)], {type:'application/json;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'schema_comparison_report.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('compareBtn').addEventListener('click', async () => {
+  const sf = document.getElementById('sourceFile').files[0];
+  const tf = document.getElementById('targetFile').files[0];
+  if (!sf || !tf) return alert('Please choose both source and target files.');
+  try {
+    document.getElementById('statusMsg').textContent = 'Loading files...';
+    sourceRows = normalizeRows(await readFile(sf), 'source');
+    targetRows = normalizeRows(await readFile(tf), 'target');
+
+    comparison = compareRows(sourceRows, targetRows);
+    updateFilters(comparison);
+    filtered = comparison.slice();
+
+    if (!document.getElementById('classFilter').value) document.getElementById('classFilter').value = '';
+    if (!document.getElementById('schemaFilter').value) document.getElementById('schemaFilter').value = '';
+
+    sortAndRender();
+    document.getElementById('statusMsg').textContent = `Loaded ${sourceRows.length} source rows and ${targetRows.length} target rows.`;
+  } catch (e) {
+    console.error(e);
+    alert('Failed to load or compare files: ' + e.message);
+  }
+});
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => exportCSV(filtered));
+document.getElementById('downloadJsonBtn').addEventListener('click', () => exportJSON(filtered));
+document.getElementById('showAllBtn').addEventListener('click', () => {
+  document.getElementById('changeFilter').value = '';
+  document.getElementById('searchBox').value = '';
+  applyFilters();
+});
+document.getElementById('showOnlyDriftBtn').addEventListener('click', () => {
+  document.getElementById('changeFilter').value = 'Changed';
+  applyFilters();
+});
+
+['classFilter','changeFilter','schemaFilter','searchBox'].forEach(id => {
+  document.getElementById(id).addEventListener('input', applyFilters);
+});
+
+document.querySelectorAll('#diffTable th').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortState.key === key) sortState.asc = !sortState.asc;
+    else sortState = { key, asc: true };
+    sortAndRender();
+  });
+});
+
+window.addEventListener('load', () => {
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+  document.head.appendChild(s);
+});
+</script>
+</body>
+</html>
