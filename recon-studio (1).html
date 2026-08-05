@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recon Studio</title>
+<style>
+/* ═══════════════════════════════════════════════
+   DESIGN TOKENS — restricted palette, §11
+   ═══════════════════════════════════════════════ */
+:root {
+  --black:  #000000;
+  --bg-0:   #0a0a0a;
+  --bg-1:   #141416;
+  --bg-2:   #1b1b1e;
+  --bg-3:   #252528;
+  --white:  #f7f7f5;
+  --text-1: #c7c7cc;
+  --text-2: #8a8a8f;
+  --silver: #c2c3c9;
+  --gold:   #cda434;
+  --amber:  #ffab1f;
+  --red:    #e34850;
+  --green:  #3fb872;
+  --blue:   #4d8fd6;
+  --border: #242428;
+  --r:   6px;
+  --r-lg:10px;
+  --font:  -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --mono: 'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg-0);color:var(--white);font-family:var(--font);font-size:13px;line-height:1.5;overflow:hidden}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg-1)}
+::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-2)}
+
+/* ── LAYOUT ─────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh}
+
+/* ── HEADER ─────────────────────────────────── */
+#hdr{display:flex;align-items:center;gap:10px;padding:0 14px;height:46px;background:var(--bg-1);border-bottom:1px solid var(--border);flex-shrink:0;overflow:hidden}
+.hdr-logo{display:flex;align-items:center;gap:7px;color:var(--gold);font-weight:700;font-size:13px;letter-spacing:.03em;flex-shrink:0}
+.hdr-logo svg{width:18px;height:18px;flex-shrink:0}
+.vsep{width:1px;height:22px;background:var(--border);flex-shrink:0}
+#hdr-run{display:flex;align-items:center;gap:14px;flex:1;overflow:hidden;min-width:0}
+.run-pill{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);white-space:nowrap;flex-shrink:0}
+.run-pill .v{color:var(--text-1);font-family:var(--mono)}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-ok  {background:var(--green);box-shadow:0 0 5px var(--green)}
+.dot-warn{background:var(--amber);box-shadow:0 0 5px var(--amber)}
+.dot-err {background:var(--red)  ;box-shadow:0 0 5px var(--red)}
+.dot-off {background:var(--text-2)}
+#hdr-acts{display:flex;align-items:center;gap:6px;flex-shrink:0}
+input[type=file]{display:none}
+
+/* ── BUTTONS ─────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:var(--r);font-size:12px;font-family:var(--font);cursor:pointer;border:none;transition:opacity .13s,filter .13s;white-space:nowrap;line-height:1}
+.btn:hover{opacity:.85}
+.btn:active{opacity:.7}
+.btn-gold{background:var(--gold);color:var(--black);font-weight:700}
+.btn-sec {background:var(--bg-3);color:var(--text-1)}
+.btn-ghost{background:transparent;color:var(--text-2);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--white);border-color:var(--text-2)}
+.btn-green{background:var(--green);color:var(--black);font-weight:700}
+.btn-red  {background:var(--red);color:var(--white);font-weight:700}
+.btn-sm{padding:3px 9px;font-size:11px}
+
+/* ── NAV ─────────────────────────────────────── */
+#nav{display:flex;align-items:flex-end;padding:0 14px;background:var(--bg-1);border-bottom:1px solid var(--border);flex-shrink:0;gap:1px;overflow-x:auto}
+.tab-btn{display:flex;align-items:center;gap:5px;padding:9px 13px;font-size:12px;color:var(--text-2);cursor:pointer;border:none;background:none;font-family:var(--font);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .13s;white-space:nowrap}
+.tab-btn:hover{color:var(--text-1)}
+.tab-btn.active{color:var(--gold);border-bottom-color:var(--gold)}
+.tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;font-weight:700;background:var(--bg-3);color:var(--text-2)}
+.tab-badge.warn{background:rgba(255,171,31,.18);color:var(--amber)}
+.tab-badge.err {background:rgba(227,72,80,.18) ;color:var(--red)}
+
+/* ── PANELS ──────────────────────────────────── */
+#content{flex:1;overflow:hidden;position:relative}
+.tab-pane,.pane{display:none;height:100%;overflow-y:auto;padding:14px;flex-direction:column;gap:13px}
+.tab-pane.active,.pane.active{display:flex}
+#pane-lineage.active,#pane-studio.active,#pane-editor.active{overflow:hidden;padding:0}
+
+.card{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}
+.card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;gap:8px;flex-wrap:wrap}
+.card-title{font-size:12px;font-weight:700;color:var(--text-1);display:flex;align-items:center;gap:7px;flex-shrink:0}
+
+/* ── STAT GRID ───────────────────────────────── */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:11px}
+.stat-card{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r);padding:13px;position:relative;overflow:hidden}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.stat-card.sc-gold::before {background:var(--gold)}
+.stat-card.sc-green::before{background:var(--green)}
+.stat-card.sc-red::before  {background:var(--red)}
+.stat-card.sc-amber::before{background:var(--amber)}
+.stat-card.sc-blue::before {background:var(--blue)}
+.stat-card.sc-silver::before{background:var(--silver)}
+.slabel{font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+.sval{font-size:24px;font-weight:700;color:var(--white);line-height:1;margin-bottom:3px;font-variant-numeric:tabular-nums}
+.ssub{font-size:11px;color:var(--text-2)}
+
+/* ── BADGES ──────────────────────────────────── */
+.badge{display:inline-flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.bh{background:rgba(227,72,80,.18) ;color:var(--red)}
+.bm{background:rgba(255,171,31,.18);color:var(--amber)}
+.bl{background:rgba(138,138,143,.15);color:var(--text-2)}
+.bg{background:rgba(63,184,114,.18);color:var(--green)}
+.bb{background:rgba(77,143,214,.18);color:var(--blue)}
+.bgold{background:rgba(205,164,52,.18);color:var(--gold)}
+.bsilv{background:rgba(194,195,201,.12);color:var(--silver)}
+/* stat-card short class variants (used in renderDash) */
+.stat-card.gold::before  {background:var(--gold)}
+.stat-card.green::before {background:var(--green)}
+.stat-card.red::before   {background:var(--red)}
+.stat-card.amber::before {background:var(--amber)}
+.stat-card.blue::before  {background:var(--blue)}
+.stat-card.silver::before{background:var(--silver)}
+
+/* ── DATA TABLE ──────────────────────────────── */
+.dt{width:100%;border-collapse:collapse;font-size:12px}
+.dt th{padding:7px 9px;text-align:left;color:var(--text-2);font-size:10px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap}
+.dt th.r,.dt td.r{text-align:right}
+.dt td{padding:7px 9px;color:var(--text-1);border-bottom:1px solid var(--border);vertical-align:middle}
+.dt tr:last-child td{border-bottom:none}
+.dt tr:hover td{background:var(--bg-2)}
+.mono{font-family:var(--mono);font-size:11px}
+.tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-family:var(--mono);background:var(--bg-3);color:var(--text-2)}
+
+/* ── PROGRESS/WATERFALL ──────────────────────── */
+.wf-row{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+.wf-row:last-child{margin-bottom:0}
+.wf-lbl{width:175px;font-size:11px;color:var(--text-2);flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)}
+.wf-track{flex:1;height:19px;background:var(--bg-3);border-radius:3px;overflow:hidden;position:relative}
+.wf-fill{height:100%;border-radius:3px;transition:width .35s;display:flex;align-items:center;padding:0 5px;font-size:10px;font-weight:700;color:var(--black);white-space:nowrap;min-width:3px}
+.wf-fill.gold  {background:var(--gold)}
+.wf-fill.green {background:var(--green)}
+.wf-fill.amber {background:var(--amber)}
+.wf-fill.red   {background:var(--red)}
+.wf-fill.blue  {background:var(--blue)}
+.wf-fill.silver{background:var(--silver)}
+.wf-num{width:65px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--text-1);flex-shrink:0}
+
+/* ── ALERTS ──────────────────────────────────── */
+.alert{display:flex;align-items:flex-start;gap:9px;padding:10px 13px;border-radius:var(--r);font-size:12px;line-height:1.5}
+.alert-warn{background:rgba(255,171,31,.10);border:1px solid rgba(255,171,31,.28);color:var(--amber)}
+.alert-err {background:rgba(227,72,80,.10) ;border:1px solid rgba(227,72,80,.28) ;color:var(--red)}
+.alert-info{background:rgba(77,143,214,.10);border:1px solid rgba(77,143,214,.28);color:var(--blue)}
+.alert-ok  {background:rgba(63,184,114,.10);border:1px solid rgba(63,184,114,.28);color:var(--green)}
+.alert-ico{font-size:15px;flex-shrink:0;margin-top:1px}
+.alert-ttl{font-weight:700;margin-bottom:2px}
+
+/* ── EMPTY STATE ─────────────────────────────── */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;gap:10px}
+.empty-ico{font-size:36px;color:var(--text-2)}
+.empty-ttl{font-size:14px;font-weight:600;color:var(--text-1)}
+.empty-dsc{font-size:12px;color:var(--text-2);max-width:300px;line-height:1.6}
+
+/* ── GRID HELPERS ────────────────────────────── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
+
+/* color shortcuts */
+.c-gold  {color:var(--gold)}
+.c-green {color:var(--green)}
+.c-red   {color:var(--red)}
+.c-amber {color:var(--amber)}
+.c-blue  {color:var(--blue)}
+.c-silver{color:var(--silver)}
+.c-dim   {color:var(--text-2)}
+.c-1     {color:var(--text-1)}
+
+/* ── FILTER CHIPS ────────────────────────────── */
+.chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:11px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:99px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);transition:all .13s;user-select:none}
+.chip:hover{border-color:var(--text-2);color:var(--text-1)}
+.chip.active-h{border-color:var(--red)  ;background:rgba(227,72,80,.12) ;color:var(--red)}
+.chip.active-m{border-color:var(--amber);background:rgba(255,171,31,.12);color:var(--amber)}
+.chip.active-l{border-color:var(--silver);color:var(--silver)}
+.chip.active-a{border-color:var(--gold);color:var(--gold)}
+
+/* ── PIPELINE FLOW STRIP ─────────────────────── */
+.flow-strip{display:flex;align-items:stretch;overflow-x:auto;background:var(--bg-2);border-radius:var(--r);border:1px solid var(--border)}
+.flow-node{flex:1;min-width:110px;padding:11px 13px;border-right:1px solid var(--border);position:relative}
+.flow-node:last-child{border-right:none}
+.fn-lbl{font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;font-weight:700}
+.fn-val{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.fn-sub{font-size:10px;color:var(--text-2);margin-top:3px}
+.fn-arr{position:absolute;right:-8px;top:50%;transform:translateY(-50%);z-index:2;color:var(--border);font-size:13px;line-height:1;pointer-events:none}
+
+/* ── STUDIO SUB-NAV + PANELS ─────────────────── */
+#studio-subnav{background:var(--bg-1);border-bottom:1px solid var(--border);padding:0 14px;display:flex;gap:0;flex-shrink:0}
+.stab{padding:8px 12px;font-size:11px;color:var(--text-2);cursor:pointer;border:none;background:none;font-family:var(--font);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .13s;white-space:nowrap}
+.stab:hover{color:var(--text-1)} .stab.active{color:var(--gold);border-bottom-color:var(--gold)}
+#studio-mid{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#stab-canvas{flex:1;overflow:auto;background:var(--bg-0);padding:16px}
+#stab-lncfg{flex:1;overflow:auto;background:var(--bg-0);padding:16px;display:none;flex-direction:column;gap:13px}
+.ln-cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.form-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:9px;background:var(--bg-2);border-radius:var(--r);border:1px solid var(--border);margin-top:10px}
+.form-row .cfg-inp{flex:1;min-width:90px}
+
+/* ── EDITOR HIGHLIGHT OVERLAY ────────────────── */
+#ed-hl{flex:1;background:var(--bg-0);padding:8px 11px;font-family:var(--mono);font-size:12px;line-height:1.625;overflow:auto;white-space:pre;display:none;tab-size:2}
+.jk{color:var(--blue)}   /* JSON key   */
+.js{color:var(--green)}  /* string val */
+.jn{color:var(--amber)}  /* number     */
+.jb{color:var(--gold)}   /* boolean    */
+.jnl{color:var(--text-2)} /* null      */
+.jp{color:var(--silver)} /* punctuation */
+
+/* ── MISC ────────────────────────────────────── */
+.dimtxt{font-size:11px;color:var(--text-2)}
+code{font-family:var(--mono);font-size:11px;color:var(--amber);background:rgba(255,171,31,.10);padding:2px 5px;border-radius:3px;word-break:break-all}
+
+/* ═══ LINEAGE ════════════════════════════════ */
+#lineage-wrap{width:100%;height:100%;overflow:hidden;background:var(--bg-0);position:relative;user-select:none}
+#lineage-toolbar{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:4px;z-index:10}
+#lineage-legend{position:absolute;bottom:12px;left:12px;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;z-index:10;display:flex;gap:14px;flex-wrap:wrap}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text-2)}
+.leg-dot{width:10px;height:8px;border-radius:2px;flex-shrink:0}
+#lineage-detail{position:absolute;top:12px;left:12px;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);padding:13px;z-index:20;width:270px;display:none;max-height:calc(100% - 24px);overflow-y:auto}
+#lineage-detail.vis{display:block}
+.ld-type{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+.ld-name{font-size:13px;font-weight:700;color:var(--white);font-family:var(--mono);margin-bottom:6px;word-break:break-all}
+.ld-desc{font-size:11px;color:var(--text-2);line-height:1.5;margin-bottom:9px}
+.ld-rows{display:flex;flex-direction:column;gap:4px}
+.ld-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:11px}
+.ld-row .dk{color:var(--text-2);flex-shrink:0}
+.ld-row .dv{color:var(--text-1);font-family:var(--mono);text-align:right;word-break:break-all}
+
+/* ═══ STUDIO ═════════════════════════════════ */
+#studio-layout{display:flex;height:100%;overflow:hidden}
+#studio-gal{width:210px;flex-shrink:0;background:var(--bg-1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+#studio-gal-hdr{padding:10px 13px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-2);border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-1);position:sticky;top:0;z-index:2}
+.gal-item{display:flex;align-items:center;gap:9px;padding:9px 13px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .13s}
+.gal-item:hover{background:var(--bg-2)}
+.gal-ico{width:30px;height:30px;border-radius:var(--r);display:flex;align-items:center;justify-content:center;font-size:14px;background:var(--bg-3);flex-shrink:0}
+.gal-nm{font-size:12px;color:var(--text-1);font-weight:500}
+.gal-ds{font-size:10px;color:var(--text-2);margin-top:1px}
+#studio-canvas{flex:1;background:var(--bg-0);overflow:auto;padding:16px}
+.s-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;min-height:200px;align-content:start}
+.s-widget{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);padding:11px;position:relative;cursor:pointer;transition:border-color .13s;min-height:80px}
+.s-widget:hover{border-color:var(--blue)}
+.s-widget.sel{border-color:var(--gold)}
+.s-ctrl{position:absolute;top:5px;right:5px;display:none;gap:3px;z-index:5}
+.s-widget:hover .s-ctrl{display:flex}
+.s-btn{width:22px;height:22px;border-radius:3px;background:var(--bg-3);color:var(--text-2);display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;border:none;font-family:var(--font)}
+.s-btn:hover{color:var(--white);background:var(--bg-2)}
+#studio-cfg{width:250px;flex-shrink:0;background:var(--bg-1);border-left:1px solid var(--border);display:flex;flex-direction:column}
+#studio-cfg-hdr{padding:10px 13px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-2);border-bottom:1px solid var(--border);flex-shrink:0}
+#studio-cfg-body{flex:1;overflow-y:auto;padding:13px}
+#studio-cfg-foot{padding:11px 13px;border-top:1px solid var(--border);display:flex;gap:7px;flex-shrink:0}
+.cfg-lbl{font-size:11px;color:var(--text-2);display:block;margin-bottom:3px;margin-top:11px}
+.cfg-lbl:first-child{margin-top:0}
+.cfg-inp{width:100%;padding:6px 9px;background:var(--bg-0);border:1px solid var(--border);border-radius:var(--r);color:var(--text-1);font-family:var(--font);font-size:12px;outline:none;transition:border-color .13s}
+.cfg-inp:focus{border-color:var(--gold)}
+select.cfg-inp{-webkit-appearance:none;cursor:pointer}
+textarea.cfg-inp{resize:vertical;min-height:60px}
+
+/* ═══ EDITOR ═════════════════════════════════ */
+#editor-layout{display:flex;height:100%}
+#ed-filetabs{width:175px;flex-shrink:0;background:var(--bg-1);border-right:1px solid var(--border);padding:10px 7px;display:flex;flex-direction:column;gap:3px}
+.ef-btn{display:flex;align-items:center;gap:7px;padding:8px 9px;border-radius:var(--r);cursor:pointer;border:1px solid transparent;font-size:12px;color:var(--text-2);transition:all .13s;background:none;font-family:var(--font);text-align:left;width:100%}
+.ef-btn:hover{background:var(--bg-2);color:var(--text-1)}
+.ef-btn.active{background:var(--bg-2);color:var(--gold);border-color:var(--border)}
+.ef-nm{font-weight:600;font-size:11px}
+.ef-ds{font-size:10px;color:var(--text-2);margin-top:1px}
+#ed-main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#ed-toolbar{display:flex;align-items:center;gap:7px;padding:7px 11px;background:var(--bg-1);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+#ed-fname{font-family:var(--mono);font-size:12px;color:var(--text-1);margin-right:auto}
+#ed-status{font-size:11px;display:flex;align-items:center;gap:4px;white-space:nowrap}
+#ed-status.ok {color:var(--green)}
+#ed-status.err{color:var(--red)}
+.ed-wrap{flex:1;display:flex;overflow:hidden}
+#ed-lnum{width:42px;background:var(--bg-1);border-right:1px solid var(--border);padding:8px 0;overflow:hidden;font-family:var(--mono);font-size:12px;color:var(--text-2);line-height:1.625;text-align:right;padding-right:7px;user-select:none;flex-shrink:0;white-space:pre}
+#ed-ta{flex:1;background:var(--bg-0);color:var(--text-1);border:none;outline:none;padding:8px 11px;font-family:var(--mono);font-size:12px;line-height:1.625;resize:none;tab-size:2;overflow:auto}
+#ed-filetabs > div.ef-import{margin-top:auto;padding:10px 4px;display:flex;flex-direction:column;gap:5px}
+
+/* ── Drop zone ───────────────────────────────── */
+.dropzone{border:1px dashed var(--border);border-radius:var(--r);padding:13px;text-align:center;font-size:12px;color:var(--text-2);cursor:pointer;transition:all .13s}
+.dropzone:hover{border-color:var(--gold);color:var(--text-1);background:rgba(205,164,52,.05)}
+
+/* ── Code inline ─────────────────────────────── */
+code{font-family:var(--mono);font-size:11px;color:var(--amber);background:rgba(255,171,31,.10);padding:2px 5px;border-radius:3px}
+
+/* ── Node highlight on lineage ───────────────── */
+.ln-node{cursor:pointer;transition:opacity .15s}
+.ln-node:hover rect.ln-bg{filter:brightness(1.25)}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ══ HEADER ══════════════════════════════════ -->
+<header id="hdr">
+  <div class="hdr-logo">
+    <svg viewBox="0 0 18 18" fill="none"><rect x="1" y="1" width="7" height="7" rx="1.5" fill="currentColor" opacity=".9"/><rect x="10" y="1" width="7" height="7" rx="1.5" fill="currentColor" opacity=".5"/><rect x="1" y="10" width="7" height="7" rx="1.5" fill="currentColor" opacity=".5"/><rect x="10" y="10" width="7" height="7" rx="1.5" fill="currentColor" opacity=".25"/><line x1="5" y1="8" x2="5" y2="10" stroke="currentColor" stroke-width="1.5"/><line x1="13" y1="8" x2="13" y2="10" stroke="currentColor" stroke-width="1.5"/></svg>
+    Recon Studio
+  </div>
+  <div class="vsep"></div>
+  <div id="hdr-run"></div>
+  <div id="hdr-acts">
+    <label for="fi-cfg" class="btn btn-ghost btn-sm" title="Load config.json">⚙ Config</label>
+    <input type="file" id="fi-cfg" accept=".json">
+    <label for="fi-recon" class="btn btn-ghost btn-sm" title="Load recon_stats.json">≡ Recon</label>
+    <input type="file" id="fi-recon" accept=".json">
+    <label for="fi-anom" class="btn btn-ghost btn-sm" title="Load anomalies.json">⚑ Anomalies</label>
+    <input type="file" id="fi-anom" accept=".json">
+    <div class="vsep"></div>
+    <button class="btn btn-gold btn-sm" id="btn-sample">Load Sample</button>
+  </div>
+</header>
+
+<!-- ══ NAV ════════════════════════════════════ -->
+<nav id="nav">
+  <button class="tab-btn active" data-tab="dash">▤ Dashboard</button>
+  <button class="tab-btn" data-tab="lineage">⌥ Lineage</button>
+  <button class="tab-btn" data-tab="recon">≡ Reconciliation</button>
+  <button class="tab-btn" data-tab="anom">⚑ Anomalies <span class="tab-badge" id="tb-anom">—</span></button>
+  <button class="tab-btn" data-tab="studio">✦ Studio</button>
+  <button class="tab-btn" data-tab="editor">{ } JSON Editor</button>
+</nav>
+
+<!-- ══ CONTENT ════════════════════════════════ -->
+<main id="content">
+  <div class="tab-pane active" id="pane-dash"><div id="dash-inner"></div></div>
+  <div class="tab-pane" id="pane-lineage">
+    <div id="lineage-wrap">
+      <div class="empty" style="height:100%"><div class="empty-ico">🗺</div><div class="empty-ttl">No config loaded</div><div class="empty-dsc">Load config.json or click Load Sample to view the pipeline lineage.</div></div>
+    </div>
+  </div>
+  <div class="tab-pane" id="pane-recon"><div id="recon-inner"></div></div>
+  <div class="tab-pane" id="pane-anom"><div id="anom-inner"></div></div>
+  <div class="tab-pane" id="pane-studio">
+    <div id="studio-layout">
+      <!-- Left: widget gallery -->
+      <div id="studio-gal"><div id="studio-gal-hdr">Widget Gallery</div></div>
+      <!-- Mid: sub-nav + canvas or lineage cfg -->
+      <div id="studio-mid">
+        <div id="studio-subnav">
+          <button class="stab active" data-stab="canvas">Dashboard Canvas</button>
+          <button class="stab" data-stab="lncfg">✦ Lineage Config Editor</button>
+        </div>
+        <div id="stab-canvas"><div class="s-grid" id="s-grid"></div></div>
+        <div id="stab-lncfg"></div>
+      </div>
+      <!-- Right: properties -->
+      <div id="studio-cfg">
+        <div id="studio-cfg-hdr">Properties</div>
+        <div id="studio-cfg-body"><div class="empty" style="padding:28px 12px"><div class="empty-ico" style="font-size:22px">←</div><div class="empty-dsc">Click a widget to configure it</div></div></div>
+        <div id="studio-cfg-foot">
+          <button class="btn btn-gold btn-sm" id="btn-export-layout" style="flex:1">↓ Export Layout</button>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-layout">Clear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tab-pane" id="pane-editor">
+    <div id="editor-layout">
+      <div id="ed-filetabs">
+        <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;padding:6px 9px 2px;font-weight:700">Files</div>
+        <button class="ef-btn active" data-ed="config"><span style="font-size:14px">⚙</span><div><div class="ef-nm">config.json</div><div class="ef-ds">Pipeline configuration</div></div></button>
+        <button class="ef-btn" data-ed="recon"><span style="font-size:14px">≡</span><div><div class="ef-nm">recon_stats.json</div><div class="ef-ds">SQL reconciliation stats</div></div></button>
+        <button class="ef-btn" data-ed="anomalies"><span style="font-size:14px">⚑</span><div><div class="ef-nm">anomalies.json</div><div class="ef-ds">Python anomaly report</div></div></button>
+        <div class="ef-import">
+          <label for="fi-import-ed" class="btn btn-ghost btn-sm" style="justify-content:center">↑ Import JSON</label>
+          <input type="file" id="fi-import-ed" accept=".json">
+          <button class="btn btn-sec btn-sm" id="btn-export-cfg-lin" title="Export config.json — the source of the lineage diagram">↓ Export Config (Lineage)</button>
+        </div>
+      </div>
+      <div id="ed-main">
+        <div id="ed-toolbar">
+          <span id="ed-fname">config.json</span>
+          <span id="ed-status" class="ok">✓ Valid JSON</span>
+          <button class="btn btn-ghost btn-sm" id="btn-hl-toggle" title="Toggle syntax highlight view">⬡ Highlight</button>
+          <button class="btn btn-ghost btn-sm" id="btn-fmt">Format</button>
+          <button class="btn btn-ghost btn-sm" id="btn-validate">Validate</button>
+          <button class="btn btn-gold btn-sm" id="btn-apply">Apply ⌃↵</button>
+          <button class="btn btn-sec btn-sm" id="btn-export-ed">↓ Export</button>
+        </div>
+        <div class="ed-wrap">
+          <div id="ed-lnum"></div>
+          <textarea id="ed-ta" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Paste or type JSON here, or drag a .json file onto this area…"></textarea>
+          <div id="ed-hl"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+
+<script>
+'use strict';
+/* ═══════════════════════════════════════════════════════════
+   SAMPLE DATA
+   ═══════════════════════════════════════════════════════════ */
+const SAMPLE = {
+config:{
+  system:{name:"Trade Reconciliation System",version:"2.1.0",database:"RECON_DB",schema:"dbo",description:"End-to-end reconciliation between OMS and Custodian settlement feeds"},
+  input_files:[
+    {id:"if_oms",name:"trades_oms.csv",description:"OMS Trade Export — daily close snapshot",format:"CSV",delimiter:",",header_row:true,expected_columns:["trade_id","instrument_id","portfolio_id","counterparty_id","trade_date","settle_date","quantity","price","currency","direction","status","settlement_type"]},
+    {id:"if_cust",name:"trades_custodian.csv",description:"Custodian Settlement Feed — T+1 confirmation",format:"CSV",delimiter:"|",header_row:true,expected_columns:["ref_id","isin","account","cpty_code","txn_date","value_date","units","unit_price","ccy","side","settle_ref","settle_type"]}
+  ],
+  staging_tables:[
+    {id:"st_oms",name:"stg_oms_trades",description:"OMS trades staging view",type:"VIEW",source_file_id:"if_oms",load_table:"raw_oms_trades"},
+    {id:"st_cust",name:"stg_custodian_trades",description:"Custodian trades staging view",type:"VIEW",source_file_id:"if_cust",load_table:"raw_custodian_trades"}
+  ],
+  lookup_tables:[
+    {id:"lk_instr",name:"lkp_instruments",description:"Instrument master — maps IDs/ISINs to normalised reference",key_columns:["instrument_id","isin"],row_count:8432},
+    {id:"lk_cpty",name:"lkp_counterparties",description:"Counterparty mapping — internal codes to LEI/BIC",key_columns:["counterparty_id","cpty_code"],row_count:1204},
+    {id:"lk_ccy",name:"lkp_currencies",description:"Currency codes and FX eligibility flags",key_columns:["currency_code"],row_count:180},
+    {id:"lk_settle",name:"lkp_settlement_types",description:"Settlement type classification",key_columns:["settle_code"],row_count:47},
+    {id:"lk_port",name:"lkp_portfolios",description:"Portfolio to custodian account mapping",key_columns:["portfolio_id","account"],row_count:312}
+  ],
+  procedures:[
+    {id:"sp_main",name:"sp_transform_and_normalize",type:"TRANSFORM",description:"Normalises both staging views, enriches via all lookups, deduplicates, applies status filters",input_tables:["stg_oms_trades","stg_custodian_trades"],lookup_tables:["lkp_instruments","lkp_counterparties","lkp_currencies","lkp_settlement_types","lkp_portfolios"],output_table:"wrk_normalized_trades"},
+    {id:"sp_matched",name:"sp_split_matched",type:"SPLIT",description:"Extracts fully matched trade pairs into output table",input_table:"wrk_normalized_trades",output_table:"out_matched_trades"},
+    {id:"sp_brk_oms",name:"sp_split_breaks_oms",type:"SPLIT",description:"Extracts OMS-side breaks — records with no custodian counterpart",input_table:"wrk_normalized_trades",output_table:"out_breaks_oms"},
+    {id:"sp_brk_cust",name:"sp_split_breaks_custodian",type:"SPLIT",description:"Extracts custodian-side breaks — records with no OMS counterpart",input_table:"wrk_normalized_trades",output_table:"out_breaks_custodian"}
+  ],
+  work_tables:[
+    {id:"wt_norm",name:"wrk_normalized_trades",description:"Normalised, enriched, de-duped combined record set",procedure_id:"sp_main"}
+  ],
+  output_tables:[
+    {id:"ot_match",name:"out_matched_trades",description:"Fully reconciled trade pairs",procedure_id:"sp_matched"},
+    {id:"ot_brk_oms",name:"out_breaks_oms",description:"OMS trades without custodian match",procedure_id:"sp_brk_oms"},
+    {id:"ot_brk_cust",name:"out_breaks_custodian",description:"Custodian trades without OMS match",procedure_id:"sp_brk_cust"}
+  ],
+  output_files:[
+    {id:"of_match",name:"matched_trades_output.csv",description:"Downstream: matched/reconciled trades",source_table_id:"ot_match",format:"CSV",downstream:"Settlement Engine"},
+    {id:"of_brk_oms",name:"oms_breaks.csv",description:"Downstream: OMS breaks for investigation",source_table_id:"ot_brk_oms",format:"CSV",downstream:"Operations Workflow"},
+    {id:"of_brk_cust",name:"custodian_breaks.csv",description:"Downstream: custodian breaks for investigation",source_table_id:"ot_brk_cust",format:"CSV",downstream:"Operations Workflow"}
+  ],
+  lineage_edges:[
+    {from:"if_oms",to:"st_oms",type:"FILE_LOAD"},
+    {from:"if_cust",to:"st_cust",type:"FILE_LOAD"},
+    {from:"st_oms",to:"sp_main",type:"INPUT"},
+    {from:"st_cust",to:"sp_main",type:"INPUT"},
+    {from:"lk_instr",to:"sp_main",type:"LOOKUP"},
+    {from:"lk_cpty",to:"sp_main",type:"LOOKUP"},
+    {from:"lk_ccy",to:"sp_main",type:"LOOKUP"},
+    {from:"lk_settle",to:"sp_main",type:"LOOKUP"},
+    {from:"lk_port",to:"sp_main",type:"LOOKUP"},
+    {from:"sp_main",to:"wt_norm",type:"OUTPUT"},
+    {from:"wt_norm",to:"sp_matched",type:"INPUT"},
+    {from:"wt_norm",to:"sp_brk_oms",type:"INPUT"},
+    {from:"wt_norm",to:"sp_brk_cust",type:"INPUT"},
+    {from:"sp_matched",to:"ot_match",type:"OUTPUT"},
+    {from:"sp_brk_oms",to:"ot_brk_oms",type:"OUTPUT"},
+    {from:"sp_brk_cust",to:"ot_brk_cust",type:"OUTPUT"},
+    {from:"ot_match",to:"of_match",type:"EXPORT"},
+    {from:"ot_brk_oms",to:"of_brk_oms",type:"EXPORT"},
+    {from:"ot_brk_cust",to:"of_brk_cust",type:"EXPORT"}
+  ]
+},
+
+recon:{
+  run_id:"RUN-2024-0312-001",run_date:"2024-03-12T08:45:23Z",batch_id:"BATCH-20240312",
+  status:"COMPLETED_WITH_WARNINGS",
+  stage_counts:[
+    {stage:"FILE_LOAD",     table:"raw_oms_trades",          record_count:15243,note:"Loaded from trades_oms.csv"},
+    {stage:"FILE_LOAD",     table:"raw_custodian_trades",    record_count:14987,note:"Loaded from trades_custodian.csv"},
+    {stage:"STAGING_VIEW",  table:"stg_oms_trades",          record_count:15243,note:"VIEW — identical to raw load"},
+    {stage:"STAGING_VIEW",  table:"stg_custodian_trades",    record_count:14987,note:"VIEW — identical to raw load"},
+    {stage:"POST_TRANSFORM",table:"wrk_normalized_trades",   record_count:28304,note:"After dedup + status filter (combined)"},
+    {stage:"OUTPUT_SPLIT",  table:"out_matched_trades",      record_count:14156,note:"Fully matched pairs"},
+    {stage:"OUTPUT_SPLIT",  table:"out_breaks_oms",          record_count:892,  note:"OMS-side breaks"},
+    {stage:"OUTPUT_SPLIT",  table:"out_breaks_custodian",    record_count:748,  note:"Custodian-side breaks"}
+  ],
+  filters:[
+    {filter_id:"F1",procedure:"sp_transform_and_normalize",description:"Exclude cancelled/voided OMS trades",condition:"status NOT IN ('CANCELLED','VOIDED')",source_table:"stg_oms_trades",records_before:15243,records_removed:342,records_after:14901},
+    {filter_id:"F2",procedure:"sp_transform_and_normalize",description:"Exclude zero-quantity OMS trades",condition:"quantity <> 0",source_table:"stg_oms_trades",records_before:14901,records_removed:17,records_after:14884},
+    {filter_id:"F3",procedure:"sp_transform_and_normalize",description:"Exclude far-future custodian trades (> T+5)",condition:"value_date <= DATEADD(day,5,txn_date)",source_table:"stg_custodian_trades",records_before:14987,records_removed:203,records_after:14784},
+    {filter_id:"F4",procedure:"sp_transform_and_normalize",description:"Deduplicate custodian by settle_ref (latest load_ts wins)",condition:"ROW_NUMBER() OVER (PARTITION BY settle_ref ORDER BY load_ts DESC) = 1",source_table:"stg_custodian_trades",records_before:14784,records_removed:64,records_after:14720}
+  ],
+  mapping_losses:[
+    {lookup_table:"lkp_instruments",   description:"OMS trades with unresolved instrument ID",       key_column:"instrument_id",  records_unmatched:87, severity:"HIGH",  sample_keys:["INSTR-9901","INSTR-0042X","INSTR-TEMP-003"]},
+    {lookup_table:"lkp_counterparties",description:"Custodian records with unknown counterparty code",key_column:"cpty_code",      records_unmatched:23, severity:"MEDIUM",sample_keys:["CPTY-999","UNK-BROKER"]},
+    {lookup_table:"lkp_currencies",    description:"Records with unsupported currency code",         key_column:"currency",       records_unmatched:4,  severity:"LOW",   sample_keys:["XBT","USN"]},
+    {lookup_table:"lkp_portfolios",    description:"OMS trades with unmapped portfolio-account pair", key_column:"portfolio_id",   records_unmatched:156,severity:"HIGH",  sample_keys:["PORT-NEW-001","PORT-NEW-002","PORT-TEST-99"]},
+    {lookup_table:"lkp_settlement_types",description:"Unknown settlement type codes",                key_column:"settlement_type",records_unmatched:11, severity:"LOW",   sample_keys:["SETTLE-FX-NDF","SWAP-TERM"]}
+  ],
+  totals:{
+    total_oms_input:15243,total_custodian_input:14987,total_input:30230,
+    total_filtered:626,total_mapping_losses:281,total_output:29796,
+    matched_pairs:14156,oms_breaks:892,custodian_breaks:748,
+    match_rate:93.27,break_count:1640
+  }
+},
+
+anomalies:{
+  run_id:"RUN-2024-0312-001",run_date:"2024-03-12T08:47:11Z",
+  python_version:"3.11.4",script:"recon_anomaly_detector.py",
+  summary:{total_anomalies:312,high:23,medium:89,low:200,tables_affected:4,
+    categories:{NULL_VALUES:68,TYPE_MISMATCH:3,DATE_ANOMALY:36,RANGE_VIOLATION:19,
+      DUPLICATE_KEYS:6,REFERENTIAL_INTEGRITY:34,ENCODING_ISSUE:70,OUTLIER:102,PATTERN_ANOMALY:22}},
+  anomalies:[
+    {id:"A001",category:"NULL_VALUES",       table:"stg_oms_trades",       column:"settle_date",    severity:"HIGH",  count:14, pct:0.09,description:"Missing settlement date on live (non-cancelled) OMS trades",          sample_ids:["TRD-10023","TRD-10045","TRD-10087"]},
+    {id:"A002",category:"NULL_VALUES",       table:"stg_oms_trades",       column:"counterparty_id",severity:"HIGH",  count:9,  pct:0.06,description:"Missing counterparty identifier on OMS trade records",               sample_ids:["TRD-11001","TRD-11002"]},
+    {id:"A003",category:"TYPE_MISMATCH",     table:"stg_custodian_trades", column:"unit_price",     severity:"HIGH",  count:3,  pct:0.02,description:"Non-numeric values detected in price column",                        sample_ids:["CUST-REF-55091","CUST-REF-55102"]},
+    {id:"A004",category:"DUPLICATE_KEYS",    table:"stg_oms_trades",       column:"trade_id",       severity:"HIGH",  count:6,  pct:0.04,description:"Duplicate primary keys detected in OMS staging table",              sample_ids:["TRD-99001","TRD-99002","TRD-99003"]},
+    {id:"A005",category:"DATE_ANOMALY",      table:"stg_oms_trades",       column:"trade_date",     severity:"MEDIUM",count:31, pct:0.20,description:"Trade dates falling on weekend or market holiday",                   sample_ids:["TRD-20100","TRD-20101","TRD-20102"]},
+    {id:"A006",category:"RANGE_VIOLATION",   table:"stg_oms_trades",       column:"quantity",       severity:"MEDIUM",count:7,  pct:0.05,description:"Negative or extreme quantity values (> 10M units)",                 sample_ids:["TRD-30450","TRD-30451"]},
+    {id:"A007",category:"RANGE_VIOLATION",   table:"stg_custodian_trades", column:"unit_price",     severity:"MEDIUM",count:12, pct:0.08,description:"Price deviates > 3σ from instrument rolling mean",                  sample_ids:["CUST-REF-60001","CUST-REF-60002"]},
+    {id:"A008",category:"REFERENTIAL_INTEGRITY",table:"wrk_normalized_trades",column:"instrument_key",severity:"MEDIUM",count:34,pct:0.12,description:"Normalised instrument key not found in reference set",            sample_ids:["NK-4512","NK-4513"]},
+    {id:"A009",category:"DATE_ANOMALY",      table:"stg_custodian_trades", column:"value_date",     severity:"MEDIUM",count:5,  pct:0.03,description:"Settlement date is earlier than trade date (T < T+0)",              sample_ids:["CUST-REF-70010"]},
+    {id:"A010",category:"OUTLIER",           table:"out_matched_trades",   column:"price_diff",     severity:"MEDIUM",count:39, pct:0.27,description:"Price tolerance breach: |OMS price − Cust price| > 0.005",          sample_ids:["PAIR-1023","PAIR-1024"]},
+    {id:"A011",category:"ENCODING_ISSUE",    table:"stg_custodian_trades", column:"cpty_code",      severity:"LOW",   count:18, pct:0.12,description:"Non-ASCII characters in counterparty code field",                   sample_ids:["CUST-REF-80001","CUST-REF-80002"]},
+    {id:"A012",category:"NULL_VALUES",       table:"stg_custodian_trades", column:"settle_ref",     severity:"LOW",   count:45, pct:0.30,description:"Missing settlement reference on custodian records",                 sample_ids:["CUST-REF-90001"]},
+    {id:"A013",category:"PATTERN_ANOMALY",   table:"stg_oms_trades",       column:"currency",       severity:"LOW",   count:22, pct:0.14,description:"Currency codes not conforming to ISO 4217 (must be 3-char alpha)",  sample_ids:["TRD-40100","TRD-40101"]},
+    {id:"A014",category:"OUTLIER",           table:"out_matched_trades",   column:"quantity_diff",  severity:"LOW",   count:63, pct:0.44,description:"Quantity rounding difference after currency normalisation",          sample_ids:["PAIR-2001"]},
+    {id:"A015",category:"ENCODING_ISSUE",    table:"stg_oms_trades",       column:"instrument_id",  severity:"LOW",   count:52, pct:0.34,description:"Trailing whitespace in instrument ID field",                        sample_ids:["TRD-50100","TRD-50101"]},
+    {id:"A016",category:"REFERENTIAL_INTEGRITY",table:"stg_custodian_trades",column:"account",      severity:"LOW",   count:4,  pct:0.03,description:"Account codes referencing inactive or retired portfolio entries",   sample_ids:["CUST-REF-10200"]}
+  ]
+}
+};
+
+/* ═══════════════════════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════════════════════ */
+const S = {
+  config:null, recon:null, anomalies:null,
+  tab:'dash', editor:'config', stab:'canvas', hlMode:false,
+  anomFilt:{sev:'all',cat:'all'},
+  lineage:{zoom:1,px:0,py:0,svgW:1800,svgH:480},
+  studio:{widgets:[],nextId:1,selId:null},
+  lncfg:{pendingEdges:null}
+};
+
+/* ═══════════════════════════════════════════════════════════
+   UTILS
+   ═══════════════════════════════════════════════════════════ */
+const fmt = n => n==null?'—':Number(n).toLocaleString();
+const pct = n => n==null?'—':Number(n).toFixed(2)+'%';
+const clamp = (v,lo,hi) => Math.min(hi,Math.max(lo,v));
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const sevClr = s => ({HIGH:'var(--red)',MEDIUM:'var(--amber)',LOW:'var(--text-2)'}[s]||'var(--text-2)');
+const sevBadge = s => {
+  const cls={HIGH:'bh',MEDIUM:'bm',LOW:'bl'}[s]||'bl';
+  return `<span class="badge ${cls}">${esc(s||'?')}</span>`;
+};
+const dlJSON = (data,name) => {
+  const b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+};
+const dlCSV = (rows,name) => {
+  const csv=rows.map(r=>r.map(c=>`"${String(c??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const b=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+};
+function flash(id,msg,bg='var(--green)',fg='var(--black)'){
+  const el=document.getElementById(id); if(!el)return;
+  const [ob,oc,ot]=[el.style.background,el.style.color,el.textContent];
+  el.style.background=bg; el.style.color=fg; el.textContent=msg;
+  setTimeout(()=>{el.style.background=ob;el.style.color=oc;el.textContent=ot;},1800);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HEADER
+   ═══════════════════════════════════════════════════════════ */
+function renderHeader() {
+  const el = document.getElementById('hdr-run');
+  if (!S.recon) {
+    el.innerHTML = `<span class="run-pill"><span class="dot dot-off"></span><span style="color:var(--text-2)">No data loaded — click Load Sample</span></span>`;
+    return;
+  }
+  const r=S.recon, t=r.totals||{};
+  const dotCls = r.status==='COMPLETED'?'dot-ok':r.status==='FAILED'?'dot-err':'dot-warn';
+  const statClr = r.status==='COMPLETED'?'var(--green)':r.status==='FAILED'?'var(--red)':'var(--amber)';
+  const mr = t.match_rate||0;
+  const mrClr = mr>=95?'var(--green)':mr>=85?'var(--amber)':'var(--red)';
+  el.innerHTML = `
+    <span class="run-pill"><span class="dot ${dotCls}"></span><span class="v">${esc(r.run_id||'—')}</span></span>
+    <span class="run-pill">Date <span class="v">${r.run_date?r.run_date.split('T')[0]:'—'}</span></span>
+    <span class="run-pill">Status <span class="v" style="color:${statClr}">${esc(r.status||'—')}</span></span>
+    <span class="run-pill">Match Rate <span class="v" style="color:${mrClr}">${pct(mr)}</span></span>
+    <span class="run-pill">Breaks <span class="v c-amber">${fmt(t.break_count)}</span></span>
+    <span class="run-pill">Mapping Losses <span class="v c-red">${fmt(t.total_mapping_losses)}</span></span>`;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DASHBOARD
+   ═══════════════════════════════════════════════════════════ */
+function renderDash() {
+  const el=document.getElementById('dash-inner');
+  if (!S.recon && !S.config) {
+    el.innerHTML=`<div class="empty"><div class="empty-ico">📂</div><div class="empty-ttl">No data loaded</div><div class="empty-dsc">Load the three JSON files above, or click <strong>Load Sample</strong>.</div><button class="btn btn-gold" style="margin-top:8px" onclick="loadSample()">Load Sample Data</button></div>`;
+    return;
+  }
+  const r=S.recon||{}, a=S.anomalies||{}, c=S.config||{};
+  const t=r.totals||{}, as=a.summary||{};
+  const mr=t.match_rate||0;
+  const mrc=mr>=95?'green':mr>=85?'amber':'red';
+  let h='';
+
+  // ── Banner ──────────────────────────────────────
+  const bannerMap={
+    COMPLETED_WITH_WARNINGS:`<div class="alert alert-warn"><span class="alert-ico">⚠</span><div><div class="alert-ttl">Completed with Warnings</div>${fmt(t.total_mapping_losses||0)} records lost to missing mappings · ${fmt(t.break_count||0)} uninvestigated breaks remain. Review Reconciliation and Anomalies tabs.</div></div>`,
+    COMPLETED:`<div class="alert alert-ok"><span class="alert-ico">✓</span><div><div class="alert-ttl">Completed Successfully</div>All records processed. Match rate: ${pct(mr)}.</div></div>`,
+    FAILED:`<div class="alert alert-err"><span class="alert-ico">✕</span><div><div class="alert-ttl">Run Failed</div>Output tables may be incomplete. Check database logs.</div></div>`
+  };
+  if(bannerMap[r.status]) h+=bannerMap[r.status];
+
+  // ── Pipeline Flow Strip ──────────────────────────
+  const ti=t.total_input||0, tf=ti-(t.total_filtered||0), tm=tf-(t.total_mapping_losses||0);
+  h+=`<div class="flow-strip">
+    <div class="flow-node"><div class="fn-lbl">Total Input</div><div class="fn-val" style="color:var(--gold)">${fmt(ti)}</div><div class="fn-sub">OMS + Custodian</div><div class="fn-arr">›</div></div>
+    <div class="flow-node"><div class="fn-lbl">After Filters</div><div class="fn-val" style="color:var(--amber)">${fmt(tf)}</div><div class="fn-sub">−${fmt(t.total_filtered||0)} removed</div><div class="fn-arr">›</div></div>
+    <div class="flow-node"><div class="fn-lbl">After Mapping</div><div class="fn-val" style="color:var(--amber)">${fmt(tm)}</div><div class="fn-sub">−${fmt(t.total_mapping_losses||0)} lost</div><div class="fn-arr">›</div></div>
+    <div class="flow-node"><div class="fn-lbl">Matched Pairs</div><div class="fn-val" style="color:var(--${mrc})">${fmt(t.matched_pairs||0)}</div><div class="fn-sub">${pct(mr)} match rate</div><div class="fn-arr">›</div></div>
+    <div class="flow-node"><div class="fn-lbl">OMS Breaks</div><div class="fn-val" style="color:var(--red)">${fmt(t.oms_breaks||0)}</div><div class="fn-sub">no custodian match</div><div class="fn-arr">›</div></div>
+    <div class="flow-node"><div class="fn-lbl">Cust. Breaks</div><div class="fn-val" style="color:var(--red)">${fmt(t.custodian_breaks||0)}</div><div class="fn-sub">no OMS match</div></div>
+  </div>`;
+
+  // ── KPI grid ────────────────────────────────────
+  h+=`<div class="stat-grid">
+    <div class="stat-card ${mrc}"><div class="slabel">Match Rate</div><div class="sval" style="color:var(--${mrc})">${pct(mr)}</div><div class="ssub">${fmt(t.matched_pairs)} pairs reconciled</div></div>
+    <div class="stat-card gold"><div class="slabel">Total Input</div><div class="sval">${fmt(ti)}</div><div class="ssub">OMS ${fmt(t.total_oms_input)} + Cust ${fmt(t.total_custodian_input)}</div></div>
+    <div class="stat-card amber"><div class="slabel">Total Breaks</div><div class="sval" style="color:var(--amber)">${fmt(t.break_count)}</div><div class="ssub">OMS ${fmt(t.oms_breaks)} · Cust ${fmt(t.custodian_breaks)}</div></div>
+    <div class="stat-card silver"><div class="slabel">Filtered Out</div><div class="sval">${fmt(t.total_filtered)}</div><div class="ssub">${(r.filters||[]).length} conditions applied</div></div>
+    <div class="stat-card red"><div class="slabel">Mapping Losses</div><div class="sval" style="color:var(--red)">${fmt(t.total_mapping_losses)}</div><div class="ssub">${(r.mapping_losses||[]).length} lookups affected</div></div>
+    <div class="stat-card ${(as.high||0)>0?'red':(as.medium||0)>0?'amber':'green'}"><div class="slabel">Data Anomalies</div><div class="sval">${fmt(as.total_anomalies)}</div><div class="ssub"><span style="color:var(--red)">${fmt(as.high)} H</span> · <span style="color:var(--amber)">${fmt(as.medium)} M</span> · <span style="color:var(--text-2)">${fmt(as.low)} L</span></div></div>
+  </div>`;
+
+  // ── Stage waterfall + Mapping losses ─────────────
+  h+=`<div class="g2">`;
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Stage Record Counts</span><button class="btn btn-ghost btn-sm" onclick="switchTab('recon')">Details →</button></div>`;
+  const stages=r.stage_counts||[], smx=Math.max(...stages.map(s=>s.record_count),1);
+  const stClr={'FILE_LOAD':'gold','STAGING_VIEW':'blue','POST_TRANSFORM':'amber','OUTPUT_SPLIT':'green'};
+  if(stages.length) stages.forEach(s=>{const w=Math.round(s.record_count/smx*100);h+=`<div class="wf-row"><div class="wf-lbl" title="${esc(s.table)}">${esc(s.table)}</div><div class="wf-track"><div class="wf-fill ${stClr[s.stage]||'silver'}" style="width:${w}%">${w>22?fmt(s.record_count):''}</div></div><div class="wf-num">${w<=22?fmt(s.record_count):''}</div></div>`;});
+  else h+=`<div style="font-size:12px;color:var(--text-2)">No stage data</div>`;
+  h+=`</div>`;
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Mapping Losses by Lookup</span></div>`;
+  const mls=r.mapping_losses||[], mmx=Math.max(...mls.map(m=>m.records_unmatched),1);
+  if(mls.length) mls.forEach(m=>{const w=Math.max(3,Math.round(m.records_unmatched/mmx*100));const cl=m.severity==='HIGH'?'red':m.severity==='MEDIUM'?'amber':'blue';h+=`<div class="wf-row"><div class="wf-lbl" title="${esc(m.lookup_table)}">${esc(m.lookup_table)}</div><div class="wf-track"><div class="wf-fill ${cl}" style="width:${w}%"></div></div><div class="wf-num">${fmt(m.records_unmatched)}</div></div>`;});
+  else h+=`<div style="font-size:12px;color:var(--text-2)">No mapping loss data</div>`;
+  h+=`</div></div>`;
+
+  // ── Anomaly categories + Filter conditions ────────
+  h+=`<div class="g2">`;
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Anomaly Categories</span><button class="btn btn-ghost btn-sm" onclick="switchTab('anom')">View All →</button></div>`;
+  const cats=Object.entries(as.categories||{}).sort((a,b)=>b[1]-a[1]),cmx=Math.max(...cats.map(c=>c[1]),1);
+  if(cats.length) cats.forEach(([c,n])=>{h+=`<div class="wf-row"><div class="wf-lbl">${esc(c.replace(/_/g,' '))}</div><div class="wf-track"><div class="wf-fill blue" style="width:${Math.max(3,Math.round(n/cmx*100))}%"></div></div><div class="wf-num">${fmt(n)}</div></div>`;});
+  else h+=`<div style="font-size:12px;color:var(--text-2)">No anomaly data</div>`;
+  h+=`</div>`;
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Active Filter Conditions</span></div>`;
+  const filts=r.filters||[];
+  if(filts.length){h+=`<table class="dt"><thead><tr><th>#</th><th>Condition</th><th>Source</th><th class="r">Removed</th></tr></thead><tbody>`;filts.forEach(f=>{h+=`<tr><td style="color:var(--text-2);font-family:var(--mono);font-size:11px">${esc(f.filter_id)}</td><td><code>${esc(f.condition)}</code><div style="font-size:10px;color:var(--text-2);margin-top:2px">${esc(f.description)}</div></td><td><span class="tag">${esc(f.source_table)}</span></td><td style="text-align:right;font-family:var(--mono);color:var(--amber)">${fmt(f.records_removed)}</td></tr>`;});h+=`</tbody></table>`;}
+  else h+=`<div style="font-size:12px;color:var(--text-2)">No filter data</div>`;
+  h+=`</div></div>`;
+
+  // ── Config summary ────────────────────────────────
+  if(c.system){h+=`<div class="card"><div class="card-hdr"><span class="card-title">Pipeline Configuration</span><button class="btn btn-ghost btn-sm" onclick="switchTab('lineage')">View Lineage →</button></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;font-size:12px"><div><span style="color:var(--text-2)">System</span><br>${esc(c.system.name||'—')}</div><div><span style="color:var(--text-2)">Database</span><br><span style="font-family:var(--mono);font-size:11px">${esc(c.system.database||'—')}.${esc(c.system.schema||'dbo')}</span></div><div><span style="color:var(--text-2)">Input Files</span><br>${(c.input_files||[]).length}</div><div><span style="color:var(--text-2)">Lookup Tables</span><br>${(c.lookup_tables||[]).length}</div><div><span style="color:var(--text-2)">Procedures</span><br>${(c.procedures||[]).length}</div><div><span style="color:var(--text-2)">Lineage Edges</span><br>${(c.lineage_edges||[]).length}</div></div></div>`;}
+  el.innerHTML=h;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LINEAGE
+   ═══════════════════════════════════════════════════════════ */
+function renderLineage() {
+  const wrap=document.getElementById('lineage-wrap');
+  if (!S.config) {
+    wrap.innerHTML=`<div class="empty" style="height:100%"><div class="empty-ico">🗺</div><div class="empty-ttl">No config loaded</div><div class="empty-dsc">Load config.json or click Load Sample.</div></div>`;
+    return;
+  }
+  wrap.innerHTML=`
+    <svg id="ln-svg" width="100%" height="100%" style="display:block"></svg>
+    <div id="lineage-toolbar">
+      <button class="btn btn-ghost btn-sm" onclick="lnZoom(1.2)" title="Zoom in">+</button>
+      <button class="btn btn-ghost btn-sm" onclick="lnZoom(0.833)" title="Zoom out">−</button>
+      <button class="btn btn-ghost btn-sm" onclick="lnFit()" title="Fit to screen">⊙</button>
+    </div>
+    <div id="lineage-legend">
+      <div class="leg-item"><div class="leg-dot" style="background:#1a1608;outline:1.5px solid var(--gold)"></div>Input File</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#0d1a26;outline:1.5px solid var(--blue)"></div>Staging View</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1a1206;outline:1.5px solid var(--gold);opacity:.7"></div>Lookup</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1c1506;outline:1.5px solid var(--amber);border-radius:4px"></div>Procedure</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--bg-2);outline:1.5px solid var(--silver)"></div>Work Table</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#0a1a10;outline:1.5px solid var(--green)"></div>Output Table</div>
+      <div class="leg-item"><div class="leg-dot" style="background:transparent;outline:1.5px dashed var(--green)"></div>Output File</div>
+    </div>
+    <div id="lineage-detail"></div>`;
+  buildLnSVG();
+  setupLnPan();
+}
+
+function buildLnSVG() {
+  const c=S.config;
+  const NW=168, NH=46, GAP=20, PAD_X=30, PAD_Y=54, COL_STEP=200;
+
+  // Column assignments by node type
+  const COL = {INPUT_FILE:0,STAGING_VIEW:1,LOOKUP_TABLE:2,TRANSFORM_SP:3,WORK_TABLE:4,SPLIT_SP:5,OUTPUT_TABLE:6,OUTPUT_FILE:7};
+
+  // Build node registry
+  const nodes={};
+  const addNode=(id,type,name,desc,sortKey,data)=>{
+    nodes[id]={id,type,name,desc,sortKey:sortKey||0,col:COL[type]||0,data:data||{}};
+  };
+
+  (c.input_files||[]).forEach((f,i)=>addNode(f.id,'INPUT_FILE',f.name,f.description,i,f));
+  (c.staging_tables||[]).forEach((s,i)=>addNode(s.id,'STAGING_VIEW',s.name,s.description,i,s));
+  (c.lookup_tables||[]).forEach((l,i)=>addNode(l.id,'LOOKUP_TABLE',l.name,l.description,i,l));
+  (c.procedures||[]).forEach(p=>{
+    const t=p.type==='TRANSFORM'?'TRANSFORM_SP':'SPLIT_SP';
+    addNode(p.id,t,p.name,p.description, p.type==='SPLIT'?(c.procedures||[]).filter(x=>x.type==='SPLIT').indexOf(p):0, p);
+  });
+  (c.work_tables||[]).forEach((w,i)=>addNode(w.id,'WORK_TABLE',w.name,w.description,i,w));
+  (c.output_tables||[]).forEach((o,i)=>addNode(o.id,'OUTPUT_TABLE',o.name,o.description,i,o));
+  (c.output_files||[]).forEach((f,i)=>addNode(f.id,'OUTPUT_FILE',f.name,f.description,i,f));
+
+  // Group by column, sort by sortKey, assign row index
+  const colGroups={};
+  Object.values(nodes).forEach(n=>{
+    (colGroups[n.col]||(colGroups[n.col]=[])).push(n);
+  });
+  Object.values(colGroups).forEach(g=>{
+    g.sort((a,b)=>a.sortKey-b.sortKey);
+    g.forEach((n,i)=>n.row=i);
+  });
+
+  // Compute SVG dimensions
+  const maxRows=Math.max(...Object.values(colGroups).map(g=>g.length),1);
+  const SVG_H=PAD_Y*2+maxRows*NH+(maxRows-1)*GAP;
+  const SVG_W=PAD_X*2+8*COL_STEP+NW;
+  S.lineage.svgW=SVG_W; S.lineage.svgH=SVG_H;
+
+  // Compute x,y for each node (vertically centered per column)
+  Object.values(colGroups).forEach(g=>{
+    const totalH=g.length*NH+(g.length-1)*GAP;
+    const startY=(SVG_H-totalH)/2;
+    g.forEach(n=>{
+      n.x=PAD_X+n.col*COL_STEP;
+      n.y=startY+n.row*(NH+GAP);
+    });
+  });
+
+  // Node styling
+  const NS={
+    INPUT_FILE:  {fill:'#1a1608',stroke:'#cda434',tc:'#cda434',  badge:'FILE'},
+    STAGING_VIEW:{fill:'#0d1a26',stroke:'#4d8fd6',tc:'#4d8fd6',  badge:'VIEW'},
+    LOOKUP_TABLE:{fill:'#1a1206',stroke:'#cda434',tc:'#c2c3c9',  badge:'LKP'},
+    TRANSFORM_SP:{fill:'#1c1506',stroke:'#ffab1f',tc:'#ffab1f',  badge:'SP'},
+    WORK_TABLE:  {fill:'#141416',stroke:'#c2c3c9',tc:'#c2c3c9',  badge:'WRK'},
+    SPLIT_SP:    {fill:'#1c1506',stroke:'#ffab1f',tc:'#ffab1f',  badge:'SP'},
+    OUTPUT_TABLE:{fill:'#0a1a10',stroke:'#3fb872',tc:'#3fb872',  badge:'TBL'},
+    OUTPUT_FILE: {fill:'#0a0a0a',stroke:'#3fb872',tc:'#3fb872',  badge:'OUT',dashed:true}
+  };
+
+  // Edge styling
+  const ES={
+    FILE_LOAD:{stroke:'#4d8fd6',dash:'4,3',w:1.4,mrk:'blue'},
+    INPUT:    {stroke:'#4d8fd6',dash:null,  w:1.5,mrk:'blue'},
+    LOOKUP:   {stroke:'#cda434',dash:'3,4', w:1.2,mrk:'gold'},
+    OUTPUT:   {stroke:'#3fb872',dash:null,  w:1.5,mrk:'green'},
+    EXPORT:   {stroke:'#3fb872',dash:'5,3', w:1.5,mrk:'green'}
+  };
+
+  // Column header labels
+  const COL_LABELS=['Input Files','Staging Views','Lookup Tables','Transform','Work Table','Split SPs','Output Tables','Output Files'];
+
+  // Build SVG content
+  const svg=document.getElementById('ln-svg');
+  const gMain=document.createElementNS('http://www.w3.org/2000/svg','g');
+  gMain.id='ln-g';
+  svg.appendChild(gMain);
+  S.lineage._g=gMain;
+
+  // Parse helper: insert SVG markup
+  const mkEl=(tag,attrs,inner)=>{
+    const el=document.createElementNS('http://www.w3.org/2000/svg',tag);
+    Object.entries(attrs).forEach(([k,v])=>el.setAttribute(k,v));
+    if(inner)el.innerHTML=inner;
+    return el;
+  };
+
+  // Defs
+  const defs=mkEl('defs',{});
+  ['blue','green','gold'].forEach(id=>{
+    const clr=id==='blue'?'#4d8fd6':id==='green'?'#3fb872':'#cda434';
+    defs.innerHTML+=`<marker id="m-${id}" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto"><polygon points="0,0 8,3.5 0,7" fill="${clr}" opacity=".8"/></marker>`;
+  });
+  gMain.appendChild(defs);
+
+  // Column labels
+  COL_LABELS.forEach((lbl,col)=>{
+    const x=PAD_X+col*COL_STEP+NW/2;
+    const t=mkEl('text',{x,y:PAD_Y-16,'text-anchor':'middle',fill:'#8a8a8f','font-size':'9','font-family':'-apple-system,sans-serif','letter-spacing':'0.06em','font-weight':'700'});
+    t.textContent=lbl.toUpperCase();
+    gMain.appendChild(t);
+  });
+
+  // Divider lines under col labels
+  for(let col=0;col<8;col++){
+    const x=PAD_X+col*COL_STEP;
+    const ln=mkEl('line',{x1:x,y1:PAD_Y-6,x2:x+NW,y2:PAD_Y-6,stroke:'#242428','stroke-width':'1'});
+    gMain.appendChild(ln);
+  }
+
+  // Edges (drawn behind nodes)
+  (c.lineage_edges||[]).forEach(edge=>{
+    const from=nodes[edge.from], to=nodes[edge.to];
+    if(!from||!to) return;
+    const es=ES[edge.type]||{stroke:'#8a8a8f',dash:null,w:1,mrk:'blue'};
+    // From: right-center of source; To: left-center of target
+    const fx=from.x+NW, fy=from.y+NH/2;
+    const tx=to.x,      ty=to.y+NH/2;
+    const mx=(fx+tx)/2;
+    const path=mkEl('path',{
+      d:`M${fx},${fy} C${mx},${fy} ${mx},${ty} ${tx},${ty}`,
+      stroke:es.stroke,'stroke-width':es.w,fill:'none',opacity:'0.65',
+      ...(es.dash?{'stroke-dasharray':es.dash}:{}),
+      'marker-end':`url(#m-${es.mrk})`
+    });
+    gMain.appendChild(path);
+  });
+
+  // Nodes
+  Object.values(nodes).forEach(n=>{
+    const s=NS[n.type]||NS.WORK_TABLE;
+    const dispName=n.name.length>21?n.name.slice(0,20)+'…':n.name;
+    const g=mkEl('g',{class:'ln-node','data-id':n.id});
+
+    // Background rect
+    const rect=mkEl('rect',{x:n.x,y:n.y,width:NW,height:NH,rx:'6',
+      fill:s.fill,stroke:s.stroke,'stroke-width':'1.5',class:'ln-bg',
+      ...(s.dashed?{'stroke-dasharray':'5,3'}:{})});
+    g.appendChild(rect);
+
+    // Left accent bar
+    const bar=mkEl('rect',{x:n.x,y:n.y+1,width:4,height:NH-2,rx:'2',fill:s.stroke,opacity:'.9'});
+    g.appendChild(bar);
+
+    // Badge label
+    const tbadge=mkEl('text',{x:n.x+13,y:n.y+16,fill:s.stroke,'font-size':'9','font-family':'monospace','font-weight':'700','letter-spacing':'0.06em'});
+    tbadge.textContent=s.badge;
+    g.appendChild(tbadge);
+
+    // Node name
+    const tname=mkEl('text',{x:n.x+13,y:n.y+31,fill:s.tc,'font-size':'11','font-family':'-apple-system,sans-serif','font-weight':'500'});
+    tname.textContent=dispName;
+    g.appendChild(tname);
+
+    g.addEventListener('click',e=>{e.stopPropagation();showLnDetail(n.id,n);lnHighlight(n.id);});
+    gMain.appendChild(g);
+  });
+
+  svg.addEventListener('click',()=>{
+    document.getElementById('lineage-detail').classList.remove('vis');
+    lnHighlight(null);
+  });
+
+  lnFit();
+}
+
+function lnHighlight(selId){
+  document.querySelectorAll('.ln-node .ln-bg').forEach(r=>{
+    r.style.opacity=selId?'0.45':'1';
+  });
+  if(selId){
+    const g=document.querySelector(`.ln-node[data-id="${CSS.escape(selId)}"] .ln-bg`);
+    if(g)g.style.opacity='1';
+  }
+}
+
+function showLnDetail(id,n){
+  const det=document.getElementById('lineage-detail');
+  const typeLabel={INPUT_FILE:'Input File',STAGING_VIEW:'Staging View',LOOKUP_TABLE:'Lookup Table',TRANSFORM_SP:'Transform Procedure',WORK_TABLE:'Work Table',SPLIT_SP:'Split Procedure',OUTPUT_TABLE:'Output Table',OUTPUT_FILE:'Output File'};
+  const typeClr={INPUT_FILE:'var(--gold)',STAGING_VIEW:'var(--blue)',LOOKUP_TABLE:'var(--gold)',TRANSFORM_SP:'var(--amber)',WORK_TABLE:'var(--silver)',SPLIT_SP:'var(--amber)',OUTPUT_TABLE:'var(--green)',OUTPUT_FILE:'var(--green)'};
+  const clr=typeClr[n.type]||'var(--text-2)';
+  const d=n.data||{};
+
+  let rows='';
+  if(n.type==='INPUT_FILE'){
+    rows+=`<div class="ld-row"><span class="dk">Format</span><span class="dv">${esc(d.format||'—')}${d.delimiter?` / "${esc(d.delimiter)}"`:''}</span></div>`;
+    rows+=`<div class="ld-row"><span class="dk">Columns</span><span class="dv">${(d.expected_columns||[]).length}</span></div>`;
+  } else if(n.type==='STAGING_VIEW'){
+    rows+=`<div class="ld-row"><span class="dk">Type</span><span class="dv">${esc(d.type||'VIEW')}</span></div>`;
+    rows+=`<div class="ld-row"><span class="dk">Load table</span><span class="dv">${esc(d.load_table||'—')}</span></div>`;
+    if(S.recon){const sc=(S.recon.stage_counts||[]).find(s=>s.table===d.name);if(sc)rows+=`<div class="ld-row"><span class="dk">Records</span><span class="dv c-gold">${fmt(sc.record_count)}</span></div>`;}
+  } else if(n.type==='LOOKUP_TABLE'){
+    rows+=`<div class="ld-row"><span class="dk">Keys</span><span class="dv">${(d.key_columns||[]).join(', ')}</span></div>`;
+    rows+=`<div class="ld-row"><span class="dk">Rows</span><span class="dv">${fmt(d.row_count)}</span></div>`;
+    if(S.recon){const ml=(S.recon.mapping_losses||[]).find(m=>m.lookup_table===d.name);if(ml)rows+=`<div class="ld-row"><span class="dk">Unmatched</span><span class="dv" style="color:${sevClr(ml.severity)}">${fmt(ml.records_unmatched)}</span></div>`;}
+  } else if(n.type==='TRANSFORM_SP'||n.type==='SPLIT_SP'){
+    rows+=`<div class="ld-row"><span class="dk">Type</span><span class="dv">${esc(d.type||'—')}</span></div>`;
+    rows+=`<div class="ld-row"><span class="dk">Output</span><span class="dv">${esc(d.output_table||'—')}</span></div>`;
+    if(n.type==='TRANSFORM_SP')rows+=`<div class="ld-row"><span class="dk">Lookups used</span><span class="dv">${(d.lookup_tables||[]).length}</span></div>`;
+  } else if(n.type==='WORK_TABLE'||n.type==='OUTPUT_TABLE'){
+    if(S.recon){const sc=(S.recon.stage_counts||[]).find(s=>s.table===d.name);if(sc)rows+=`<div class="ld-row"><span class="dk">Records</span><span class="dv c-green">${fmt(sc.record_count)}</span></div>`;}
+    rows+=`<div class="ld-row"><span class="dk">Source SP</span><span class="dv">${esc(d.procedure_id||'—')}</span></div>`;
+  } else if(n.type==='OUTPUT_FILE'){
+    rows+=`<div class="ld-row"><span class="dk">Format</span><span class="dv">${esc(d.format||'—')}</span></div>`;
+    rows+=`<div class="ld-row"><span class="dk">Downstream</span><span class="dv">${esc(d.downstream||'—')}</span></div>`;
+  }
+
+  det.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <div class="ld-type" style="color:${clr}">${esc(typeLabel[n.type]||n.type)}</div>
+    <button onclick="document.getElementById('lineage-detail').classList.remove('vis');lnHighlight(null)" style="background:none;border:none;color:var(--text-2);cursor:pointer;font-size:18px;line-height:1;padding:0">×</button>
+  </div>
+  <div class="ld-name">${esc(n.name)}</div>
+  <div class="ld-desc">${esc(n.desc||'No description')}</div>
+  <div class="ld-rows">${rows}</div>`;
+  det.classList.add('vis');
+}
+
+function lnZoom(f){
+  S.lineage.zoom=clamp(S.lineage.zoom*f,0.18,4);
+  lnApplyTransform();
+}
+function lnFit(){
+  const wrap=document.getElementById('lineage-wrap');
+  if(!wrap||!S.lineage.svgW) return;
+  const cw=wrap.clientWidth, ch=wrap.clientHeight;
+  const z=Math.min(cw/S.lineage.svgW, ch/S.lineage.svgH, 1)*0.9;
+  S.lineage.zoom=z;
+  S.lineage.px=(cw-S.lineage.svgW*z)/2;
+  S.lineage.py=(ch-S.lineage.svgH*z)/2;
+  lnApplyTransform();
+}
+function lnApplyTransform(){
+  const g=document.getElementById('ln-g');
+  if(!g) return;
+  g.setAttribute('transform',`translate(${S.lineage.px},${S.lineage.py}) scale(${S.lineage.zoom})`);
+}
+function setupLnPan(){
+  const wrap=document.getElementById('lineage-wrap');
+  if(!wrap) return;
+  let drag=false,sx=0,sy=0,spx=0,spy=0;
+  wrap.addEventListener('mousedown',e=>{
+    if(e.button!==0||e.target.closest('.btn, #lineage-detail, #lineage-toolbar')) return;
+    drag=true; sx=e.clientX; sy=e.clientY; spx=S.lineage.px; spy=S.lineage.py;
+    wrap.style.cursor='grabbing';
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!drag) return;
+    S.lineage.px=spx+(e.clientX-sx); S.lineage.py=spy+(e.clientY-sy);
+    lnApplyTransform();
+  });
+  document.addEventListener('mouseup',()=>{drag=false; const w=document.getElementById('lineage-wrap'); if(w)w.style.cursor='';});
+  wrap.addEventListener('wheel',e=>{e.preventDefault(); lnZoom(e.deltaY<0?1.1:0.91);},{passive:false});
+  // Touch support
+  let touches=[];
+  wrap.addEventListener('touchstart',e=>{
+    touches=Array.from(e.touches);
+    drag=true; sx=touches[0].clientX; sy=touches[0].clientY; spx=S.lineage.px; spy=S.lineage.py;
+  },{passive:true});
+  wrap.addEventListener('touchmove',e=>{
+    if(!drag) return;
+    if(e.touches.length===1){
+      S.lineage.px=spx+(e.touches[0].clientX-sx);
+      S.lineage.py=spy+(e.touches[0].clientY-sy);
+      lnApplyTransform();
+    }
+  },{passive:true});
+  wrap.addEventListener('touchend',()=>{drag=false;});
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RECONCILIATION
+   ═══════════════════════════════════════════════════════════ */
+function renderRecon(){
+  const el=document.getElementById('recon-inner');
+  if(!S.recon){el.innerHTML=`<div class="empty"><div class="empty-ico">≡</div><div class="empty-ttl">No reconciliation data</div><div class="empty-dsc">Load recon_stats.json or click Load Sample.</div><button class="btn btn-gold" style="margin-top:8px" onclick="loadSample()">Load Sample</button></div>`;return;}
+  const r=S.recon, t=r.totals||{}; let h='';
+
+  // Run summary + CSV export
+  const bc={COMPLETED:'bg',COMPLETED_WITH_WARNINGS:'bm',FAILED:'bh'}[r.status]||'bm';
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Run Summary</span><div style="display:flex;gap:7px;align-items:center"><span class="badge ${bc}">${esc(r.status||'—')}</span><button class="btn btn-sec btn-sm" onclick="exportReconCSV()">↓ CSV</button><button class="btn btn-sec btn-sm" onclick="dlJSON(S.recon,'recon_stats.json')">↓ JSON</button></div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;font-size:12px">
+    <div><span style="color:var(--text-2)">Run ID</span><br><span style="font-family:var(--mono);font-size:11px">${esc(r.run_id||'—')}</span></div>
+    <div><span style="color:var(--text-2)">Run Date</span><br>${r.run_date?r.run_date.replace('T',' ').replace('Z',''):'—'}</div>
+    <div><span style="color:var(--text-2)">Batch ID</span><br><span style="font-family:var(--mono);font-size:11px">${esc(r.batch_id||'—')}</span></div>
+    <div><span style="color:var(--text-2)">Match Rate</span><br><span style="color:${(t.match_rate||0)>=95?'var(--green)':(t.match_rate||0)>=85?'var(--amber)':'var(--red)'}">${pct(t.match_rate)}</span></div>
+    <div><span style="color:var(--text-2)">Total Input</span><br>${fmt(t.total_input)}</div>
+    <div><span style="color:var(--text-2)">Total Breaks</span><br><span style="color:var(--amber)">${fmt(t.break_count)}</span></div>
+  </div></div>`;
+
+  // Stage counts with Δ
+  const stBadge={'FILE_LOAD':'bgold','STAGING_VIEW':'bb','POST_TRANSFORM':'bm','OUTPUT_SPLIT':'bg'};
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Stage-by-Stage Record Counts</span><span class="badge bb">${(r.stage_counts||[]).length} stages</span></div>
+  <table class="dt"><thead><tr><th>Stage</th><th>Table / Object</th><th class="r">Records</th><th class="r">Δ Prior Stage</th><th>Note</th></tr></thead><tbody>`;
+  let prev=null;
+  (r.stage_counts||[]).forEach(s=>{
+    const d=prev!==null?s.record_count-prev:null;
+    const dc=d===null?'':d>0?'color:var(--green)':d<0?'color:var(--amber)':'color:var(--text-2)';
+    h+=`<tr><td><span class="badge ${stBadge[s.stage]||'bl'}">${esc(s.stage)}</span></td><td style="font-family:var(--mono);font-size:11px">${esc(s.table)}</td><td style="text-align:right;font-family:var(--mono)">${fmt(s.record_count)}</td><td style="text-align:right;font-family:var(--mono);${dc}">${d===null?'—':(d>=0?'+':'')+fmt(d)}</td><td style="font-size:11px;color:var(--text-2)">${esc(s.note||'')}</td></tr>`;
+    prev=s.record_count;
+  });
+  h+=`</tbody></table></div>`;
+
+  // Filter conditions
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Filter Conditions Applied</span><span class="badge bm">${(r.filters||[]).length} filters · −${fmt(t.total_filtered||0)} records</span></div>
+  <div class="alert alert-info" style="margin-bottom:11px;font-size:11px"><span class="alert-ico" style="font-size:12px">ℹ</span><div>Counts written by <code>sp_transform_and_normalize</code> at runtime. <strong>Not recomputed</strong> by this viewer — if staging tables changed since the run, cross-check manually before acting on these figures.</div></div>
+  <table class="dt"><thead><tr><th>#</th><th>Description</th><th>SQL Condition</th><th>Source Table</th><th class="r">Before</th><th class="r">Removed</th><th class="r">After</th><th class="r">% Lost</th></tr></thead><tbody>`;
+  (r.filters||[]).forEach(f=>{
+    const p=f.records_before?(f.records_removed/f.records_before*100):0;
+    const pc=p.toFixed(2)+'%', pcC=p>5?'color:var(--red)':p>1?'color:var(--amber)':'color:var(--text-2)';
+    h+=`<tr><td style="color:var(--text-2);font-family:var(--mono);font-size:11px">${esc(f.filter_id)}</td><td style="font-size:11px">${esc(f.description)}</td><td><code>${esc(f.condition)}</code></td><td><span class="tag">${esc(f.source_table)}</span></td><td style="text-align:right;font-family:var(--mono)">${fmt(f.records_before)}</td><td style="text-align:right;font-family:var(--mono);color:var(--amber)">−${fmt(f.records_removed)}</td><td style="text-align:right;font-family:var(--mono)">${fmt(f.records_after)}</td><td style="text-align:right;font-family:var(--mono);${pcC}">${pc}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+
+  // Mapping losses
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Mapping Losses — Missing Lookup Keys</span><span class="badge bh">−${fmt(t.total_mapping_losses||0)} unmatched</span></div>
+  <div class="alert alert-warn" style="margin-bottom:11px;font-size:11px"><span class="alert-ico" style="font-size:12px">⚠</span><div><div class="alert-ttl">Heuristic — not recomputed by this viewer</div>Unmatched counts are logged by the stored procedure at runtime. If lookup tables were refreshed after the run, actual loss counts may differ. Do not escalate without manual cross-check against the database.</div></div>
+  <table class="dt"><thead><tr><th>Lookup Table</th><th>Key Column</th><th>Description</th><th>Severity</th><th class="r">Unmatched</th><th>Sample Keys</th></tr></thead><tbody>`;
+  (r.mapping_losses||[]).forEach(m=>{h+=`<tr><td style="font-family:var(--mono);font-size:11px">${esc(m.lookup_table)}</td><td style="font-family:var(--mono);font-size:11px;color:var(--green)">${esc(m.key_column)}</td><td style="font-size:11px;color:var(--text-2)">${esc(m.description)}</td><td>${sevBadge(m.severity)}</td><td style="text-align:right;font-family:var(--mono);color:${sevClr(m.severity)}">${fmt(m.records_unmatched)}</td><td>${(m.sample_keys||[]).map(k=>`<span class="tag">${esc(k)}</span>`).join(' ')}</td></tr>`;});
+  h+=`</tbody></table></div>`;
+  el.innerHTML=h;
+}
+function exportReconCSV(){
+  if(!S.recon)return; const r=S.recon,t=r.totals||{};
+  const rows=[['Run ID','Date','Status','Match Rate %','Total Input','Filtered','Mapping Losses','Matched','OMS Breaks','Cust Breaks']];
+  rows.push([r.run_id,r.run_date,r.status,t.match_rate,t.total_input,t.total_filtered,t.total_mapping_losses,t.matched_pairs,t.oms_breaks,t.custodian_breaks]);
+  rows.push([],['--- STAGE COUNTS ---'],['Stage','Table','Records','Note']);
+  (r.stage_counts||[]).forEach(s=>rows.push([s.stage,s.table,s.record_count,s.note]));
+  rows.push([],['--- FILTER CONDITIONS ---'],['#','Condition','Source','Before','Removed','After']);
+  (r.filters||[]).forEach(f=>rows.push([f.filter_id,f.condition,f.source_table,f.records_before,f.records_removed,f.records_after]));
+  rows.push([],['--- MAPPING LOSSES ---'],['Lookup','Key Column','Severity','Unmatched','Description']);
+  (r.mapping_losses||[]).forEach(m=>rows.push([m.lookup_table,m.key_column,m.severity,m.records_unmatched,m.description]));
+  dlCSV(rows,'recon_stats.csv');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ANOMALIES
+   ═══════════════════════════════════════════════════════════ */
+function renderAnom(){
+  const el=document.getElementById('anom-inner');
+  if(!S.anomalies){
+    el.innerHTML=`<div class="empty"><div class="empty-ico">⚑</div><div class="empty-ttl">No anomaly data</div><div class="empty-dsc">Load anomalies.json or click Load Sample.</div><button class="btn btn-gold" style="margin-top:6px" onclick="loadSample()">Load Sample</button></div>`;
+    return;
+  }
+  const a=S.anomalies, as=a.summary||{};
+  const flt=S.anomFilt;
+  let h='';
+
+  // Summary cards
+  h+=`<div class="stat-grid">
+    <div class="stat-card ${(as.high||0)>0?'red':'green'}"><div class="slabel">High</div><div class="sval" style="color:var(--red)">${fmt(as.high||0)}</div><div class="ssub">Immediate action required</div></div>
+    <div class="stat-card ${(as.medium||0)>0?'amber':'green'}"><div class="slabel">Medium</div><div class="sval" style="color:var(--amber)">${fmt(as.medium||0)}</div><div class="ssub">Should be investigated</div></div>
+    <div class="stat-card silver"><div class="slabel">Low</div><div class="sval">${fmt(as.low||0)}</div><div class="ssub">Informational only</div></div>
+    <div class="stat-card blue"><div class="slabel">Tables Affected</div><div class="sval">${fmt(as.tables_affected||0)}</div><div class="ssub">${fmt(as.total_anomalies||0)} total anomalies</div></div>
+  </div>`;
+
+  // Provenance note
+  h+=`<div class="alert alert-info" style="font-size:11px"><span class="alert-ico" style="font-size:12px">ℹ</span><div>Generated by <code>${esc(a.script||'anomaly_detector.py')}</code> (Python ${esc(a.python_version||'—')}) at ${esc(a.run_date||'—')}. Counts are as-detected at runtime — <strong>not revalidated</strong> by this viewer. Treat as a guide; verify before escalating.</div></div>`;
+
+  // Severity + category filter chips
+  const cats=as.categories?Object.keys(as.categories):[...new Set((a.anomalies||[]).map(x=>x.category))];
+  h+=`<div class="chips">
+    <span style="font-size:11px;color:var(--text-2);margin-right:2px">Severity:</span>
+    ${['all','HIGH','MEDIUM','LOW'].map(s=>{
+      const act=flt.sev===s, cls=act?(s==='HIGH'?'active-h':s==='MEDIUM'?'active-m':s==='LOW'?'active-l':'active-a'):'';
+      return `<span class="chip ${cls}" onclick="setAnomFilt('sev','${s}')">${s==='all'?'All':s}${s!=='all'?' ('+fmt(as[s.toLowerCase()]||0)+')':''}</span>`;
+    }).join('')}
+    <span style="font-size:11px;color:var(--text-2);margin-left:8px;margin-right:2px">Category:</span>
+    <span class="chip ${flt.cat==='all'?'active-a':''}" onclick="setAnomFilt('cat','all')">All</span>
+    ${cats.map(c=>`<span class="chip ${flt.cat===c?'active-a':''}" onclick="setAnomFilt('cat',${JSON.stringify(c)})">${esc(c.replace(/_/g,' '))}</span>`).join('')}
+  </div>`;
+
+  // Filtered anomaly list
+  const list=(a.anomalies||[]).filter(x=>(flt.sev==='all'||x.severity===flt.sev)&&(flt.cat==='all'||x.category===flt.cat));
+  h+=`<div class="card"><div class="card-hdr"><span class="card-title">Anomaly Detail</span>
+    <div style="display:flex;gap:7px;align-items:center">
+      <span class="badge bb">${list.length} of ${(a.anomalies||[]).length}</span>
+      <button class="btn btn-sec btn-sm" onclick="exportAnomCSV()">↓ CSV</button>
+      <button class="btn btn-sec btn-sm" onclick="dlJSON(S.anomalies,'anomalies.json')">↓ JSON</button>
+    </div></div>`;
+  if(!list.length){h+=`<div class="empty" style="padding:32px"><div class="empty-ico">✓</div><div class="empty-ttl">No anomalies match filter</div></div>`;}
+  else{
+    h+=`<table class="dt"><thead><tr><th>ID</th><th>Category</th><th>Table · Column</th><th>Severity</th><th class="r">Count</th><th class="r">%</th><th>Description</th><th>Sample IDs</th></tr></thead><tbody>`;
+    list.forEach(an=>{h+=`<tr><td style="font-family:var(--mono);font-size:11px;color:var(--text-2)">${esc(an.id)}</td><td><span class="badge bb">${esc((an.category||'').replace(/_/g,' '))}</span></td><td><span class="tag">${esc(an.table)}</span> <span style="font-family:var(--mono);font-size:11px;color:var(--green)">${esc(an.column)}</span></td><td>${sevBadge(an.severity)}</td><td style="text-align:right;font-family:var(--mono);color:${sevClr(an.severity)}">${fmt(an.count)}</td><td style="text-align:right;font-size:11px;color:var(--text-2)">${an.pct!=null?an.pct.toFixed(2)+'%':'—'}</td><td style="font-size:11px;color:var(--text-2)">${esc(an.description)}</td><td>${(an.sample_ids||[]).slice(0,3).map(id=>`<span class="tag">${esc(id)}</span>`).join(' ')}</td></tr>`;});
+    h+=`</tbody></table>`;
+  }
+  h+=`</div>`;
+  el.innerHTML=h;
+}
+function setAnomFilt(k,v){S.anomFilt[k]=v; renderAnom();}
+function exportAnomCSV(){
+  if(!S.anomalies)return;
+  const rows=[['ID','Category','Table','Column','Severity','Count','%','Description','Sample IDs']];
+  (S.anomalies.anomalies||[]).forEach(a=>rows.push([a.id,a.category,a.table,a.column,a.severity,a.count,a.pct,a.description,(a.sample_ids||[]).join('; ')]));
+  dlCSV(rows,'anomalies.csv');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STUDIO
+   ═══════════════════════════════════════════════════════════ */
+const WTYPES=[
+  {type:'stat_match',  ico:'◉',nm:'Match Rate Card',      ds:'KPI: match rate %',             span:1},
+  {type:'stat_breaks', ico:'⚠',nm:'Break Count Card',     ds:'KPI: total breaks',              span:1},
+  {type:'stat_anom',   ico:'⚑',nm:'Anomaly KPI',          ds:'KPI: anomaly severity counts',   span:1},
+  {type:'stat_input',  ico:'↓',nm:'Total Input Card',     ds:'KPI: input record counts',       span:1},
+  {type:'flow_strip',  ico:'→',nm:'Pipeline Flow Strip',  ds:'End-to-end record flow numbers', span:4},
+  {type:'wf_stages',   ico:'≡',nm:'Stage Waterfall',      ds:'Bar: records per stage',         span:2},
+  {type:'wf_losses',   ico:'⊘',nm:'Mapping Losses Chart', ds:'Bar: unmatched per lookup table',span:2},
+  {type:'wf_cats',     ico:'■',nm:'Anomaly Category Chart',ds:'Bar: anomaly category breakdown',span:2},
+  {type:'tbl_filters', ico:'⋯',nm:'Filter Table',          ds:'Table: active filter conditions',span:4},
+  {type:'tbl_anom',    ico:'⚡',nm:'Anomaly Table',         ds:'Table: top anomaly rows',        span:4},
+  {type:'txt',         ico:'T',nm:'Text Block',             ds:'Custom notes / description',    span:2}
+];
+const DEF_WIDGETS=[
+  {id:1,type:'stat_match', title:'Match Rate',           span:1},
+  {id:2,type:'stat_breaks',title:'Break Count',          span:1},
+  {id:3,type:'stat_anom',  title:'Data Anomalies',       span:1},
+  {id:4,type:'stat_input', title:'Total Input',          span:1},
+  {id:5,type:'flow_strip', title:'Pipeline Flow',        span:4},
+  {id:6,type:'wf_stages',  title:'Stage Record Counts',  span:2},
+  {id:7,type:'wf_losses',  title:'Mapping Losses',       span:2},
+  {id:8,type:'wf_cats',    title:'Anomaly Categories',   span:2},
+  {id:9,type:'tbl_filters',title:'Active Filter Conditions',span:4}
+];
+
+function initStudio(){
+  if(!S.studio.widgets.length){S.studio.widgets=JSON.parse(JSON.stringify(DEF_WIDGETS));S.studio.nextId=10;}
+  renderStudio();
+}
+function switchStab(t){
+  S.stab=t;
+  document.querySelectorAll('.stab').forEach(b=>b.classList.toggle('active',b.dataset.stab===t));
+  const cv=document.getElementById('stab-canvas'), lc=document.getElementById('stab-lncfg');
+  const gal=document.getElementById('studio-gal');
+  if(t==='canvas'){cv.style.display='block';lc.style.display='none';gal.style.display='flex';}
+  else{cv.style.display='none';lc.style.display='flex';gal.style.display='none';}
+  if(t==='lncfg') renderLnCfg();
+  else renderStudio();
+}
+
+function renderStudio(){
+  // Gallery sidebar
+  const gal=document.getElementById('studio-gal');
+  gal.innerHTML=`<div id="studio-gal-hdr">Widget Gallery</div>`+
+    WTYPES.map(wt=>`<div class="gal-item" onclick="addWidget('${esc(wt.type)}')"><div class="gal-ico">${esc(wt.ico)}</div><div><div class="gal-nm">${esc(wt.nm)}</div><div class="gal-ds">${esc(wt.ds)}</div></div></div>`).join('');
+
+  // Canvas grid
+  const grid=document.getElementById('s-grid');
+  if(!S.studio.widgets.length){
+    grid.innerHTML=`<div style="grid-column:span 4"><div class="empty"><div class="empty-ico">✦</div><div class="empty-ttl">Canvas is empty</div><div class="empty-dsc">Add widgets from the gallery on the left.</div></div></div>`;
+  } else {
+    grid.innerHTML=S.studio.widgets.map(w=>`<div class="s-widget${w.id===S.studio.selId?' sel':''}" style="grid-column:span ${w.span||1}" data-wid="${w.id}" onclick="selWidget(${w.id})">
+      <div class="s-ctrl">
+        <button class="s-btn" title="← Move" onclick="event.stopPropagation();moveWidget(${w.id},-1)">←</button>
+        <button class="s-btn" title="→ Move" onclick="event.stopPropagation();moveWidget(${w.id},1)">→</button>
+        <button class="s-btn" title="Remove" style="color:var(--red)" onclick="event.stopPropagation();removeWidget(${w.id})">×</button>
+      </div>${wPreview(w)}</div>`).join('');
+  }
+  renderStuCfg();
+}
+
+function wPreview(w){
+  const r=S.recon||{},a=S.anomalies||{},t=r.totals||{},as=a.summary||{};
+  const sl=`<div class="slabel" style="margin-bottom:6px">${esc(w.title)}</div>`;
+  const stCl={'FILE_LOAD':'gold','STAGING_VIEW':'blue','POST_TRANSFORM':'amber','OUTPUT_SPLIT':'green'};
+  switch(w.type){
+    case 'stat_match':{const mr=t.match_rate||0,vc=mr>=95?'var(--green)':mr>=85?'var(--amber)':'var(--red)';return `${sl}<div class="sval" style="color:${vc}">${pct(mr)}</div><div class="ssub">${fmt(t.matched_pairs)} pairs</div>`;}
+    case 'stat_breaks':return `${sl}<div class="sval" style="color:var(--amber)">${fmt(t.break_count)}</div><div class="ssub">OMS ${fmt(t.oms_breaks)} · Cust ${fmt(t.custodian_breaks)}</div>`;
+    case 'stat_anom':  return `${sl}<div class="sval">${fmt(as.total_anomalies)}</div><div class="ssub"><span style="color:var(--red)">${fmt(as.high)} H</span> · <span style="color:var(--amber)">${fmt(as.medium)} M</span></div>`;
+    case 'stat_input': return `${sl}<div class="sval">${fmt(t.total_input)}</div><div class="ssub">OMS + Custodian</div>`;
+    case 'flow_strip':{
+      const ti=t.total_input||0,tf=ti-(t.total_filtered||0),tm=tf-(t.total_mapping_losses||0);
+      const fn=(lbl,val,vc)=>`<div style="flex:1;padding:6px 8px;border-right:1px solid var(--border)"><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;margin-bottom:2px">${lbl}</div><div style="font-size:14px;font-weight:700;color:${vc}">${fmt(val)}</div></div>`;
+      return `${sl}<div style="display:flex;background:var(--bg-3);border-radius:4px;overflow:hidden">${fn('Input',ti,'var(--gold)')}${fn('Filtered',tf,'var(--amber)')}${fn('Mapped',tm,'var(--amber)')}${fn('Matched',t.matched_pairs||0,'var(--green)')}<div style="flex:1;padding:6px 8px"><div style="font-size:9px;color:var(--text-2);text-transform:uppercase;margin-bottom:2px">Breaks</div><div style="font-size:14px;font-weight:700;color:var(--red)">${fmt(t.break_count||0)}</div></div></div>`;
+    }
+    case 'wf_stages':{const ss=(r.stage_counts||[]).slice(0,6),mx=Math.max(...ss.map(s=>s.record_count),1);return sl+ss.map(s=>`<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px"><div style="width:105px;font-size:10px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)">${esc(s.table)}</div><div style="flex:1;height:13px;background:var(--bg-3);border-radius:2px;overflow:hidden"><div style="height:100%;background:var(--${stCl[s.stage]||'silver'});width:${Math.round(s.record_count/mx*100)}%"></div></div><div style="width:55px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text-1)">${fmt(s.record_count)}</div></div>`).join('');}
+    case 'wf_losses': {const ls=r.mapping_losses||[],mx=Math.max(...ls.map(m=>m.records_unmatched),1);return sl+ls.map(m=>`<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px"><div style="width:105px;font-size:10px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)">${esc(m.lookup_table)}</div><div style="flex:1;height:13px;background:var(--bg-3);border-radius:2px;overflow:hidden"><div style="height:100%;background:var(--${m.severity==='HIGH'?'red':m.severity==='MEDIUM'?'amber':'blue'});width:${Math.max(3,Math.round(m.records_unmatched/mx*100))}%"></div></div><div style="width:55px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text-1)">${fmt(m.records_unmatched)}</div></div>`).join('');}
+    case 'wf_cats':   {const cs=Object.entries(as.categories||{}).sort((a,b)=>b[1]-a[1]).slice(0,7),mx=Math.max(...cs.map(c=>c[1]),1);return sl+cs.map(([c,n])=>`<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px"><div style="width:120px;font-size:10px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.replace(/_/g,' '))}</div><div style="flex:1;height:13px;background:var(--bg-3);border-radius:2px;overflow:hidden"><div style="height:100%;background:var(--blue);width:${Math.max(3,Math.round(n/mx*100))}%"></div></div><div style="width:40px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text-1)">${fmt(n)}</div></div>`).join('');}
+    case 'tbl_filters':return `${sl}<table class="dt" style="font-size:11px"><thead><tr><th>#</th><th>Condition</th><th>Source</th><th class="r">Removed</th></tr></thead><tbody>${(r.filters||[]).map(f=>`<tr><td style="font-family:var(--mono);font-size:10px;color:var(--text-2)">${esc(f.filter_id)}</td><td><code>${esc(f.condition)}</code></td><td><span class="tag">${esc(f.source_table)}</span></td><td style="text-align:right;font-family:var(--mono);color:var(--amber)">${fmt(f.records_removed)}</td></tr>`).join('')}</tbody></table>`;
+    case 'tbl_anom':   return `${sl}<table class="dt" style="font-size:11px"><thead><tr><th>ID</th><th>Category</th><th>Table</th><th>Sev</th><th class="r">Count</th></tr></thead><tbody>${(a.anomalies||[]).slice(0,7).map(an=>`<tr><td style="font-family:var(--mono);font-size:10px;color:var(--text-2)">${esc(an.id)}</td><td style="font-size:10px">${esc(an.category.replace(/_/g,' '))}</td><td><span class="tag" style="font-size:9px">${esc(an.table)}</span></td><td>${sevBadge(an.severity)}</td><td style="text-align:right;font-family:var(--mono)">${fmt(an.count)}</td></tr>`).join('')}</tbody></table>`;
+    case 'txt':        return `${sl}<div style="font-size:11px;color:var(--text-2);line-height:1.6;white-space:pre-wrap">${esc(w.content||'(empty — configure in Properties panel)')}</div>`;
+    default:           return `${sl}<div style="font-size:11px;color:var(--text-2)">Unknown type: ${esc(w.type)}</div>`;
+  }
+}
+
+function renderStuCfg(){
+  const body=document.getElementById('studio-cfg-body');
+  const w=S.studio.widgets.find(x=>x.id===S.studio.selId);
+  if(!w){body.innerHTML=`<div class="empty" style="padding:28px 12px"><div class="empty-ico" style="font-size:22px">←</div><div class="empty-dsc">Click a widget on the canvas to configure it</div></div>`;return;}
+  const wt=WTYPES.find(x=>x.type===w.type);
+  body.innerHTML=`<div><span style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em">Type</span><div style="font-size:12px;color:var(--text-1);margin-top:3px;font-weight:500">${esc(wt?wt.nm:w.type)}</div></div>
+    <label class="cfg-lbl" for="cp-title">Title</label>
+    <input class="cfg-inp" id="cp-title" value="${esc(w.title||'')}" oninput="updWidget(${w.id},'title',this.value)">
+    <label class="cfg-lbl" for="cp-span">Column Span (1–4)</label>
+    <select class="cfg-inp" id="cp-span" onchange="updWidget(${w.id},'span',+this.value)">
+      ${[1,2,3,4].map(n=>`<option value="${n}" ${w.span===n?'selected':''}>${n} column${n>1?'s':''}</option>`).join('')}
+    </select>
+    ${w.type==='txt'?`<label class="cfg-lbl" for="cp-cnt">Content</label><textarea class="cfg-inp" id="cp-cnt" oninput="updWidget(${w.id},'content',this.value)">${esc(w.content||'')}</textarea>`:''}
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <button class="btn btn-red btn-sm" onclick="removeWidget(${w.id})">Remove Widget</button>
+    </div>`;
+}
+
+/* ── Lineage Config Editor ───────────────────────── */
+function renderLnCfg(){
+  const el=document.getElementById('stab-lncfg');
+  if(!S.config){el.innerHTML=`<div class="empty"><div class="empty-ico">⚙</div><div class="empty-ttl">No config loaded</div><div class="empty-dsc">Load config.json or click Load Sample.</div></div>`;return;}
+  const c=S.config;
+  // Collect all nodes from config
+  const allNodes=[];
+  const pN=(arr,type)=>(arr||[]).forEach(n=>allNodes.push({id:n.id,type,name:n.name||n.id}));
+  pN(c.input_files,'INPUT_FILE');pN(c.staging_tables,'STAGING_VIEW');
+  pN(c.lookup_tables,'LOOKUP_TABLE');
+  (c.procedures||[]).forEach(p=>allNodes.push({id:p.id,type:p.type==='TRANSFORM'?'TRANSFORM_SP':'SPLIT_SP',name:p.name}));
+  pN(c.work_tables,'WORK_TABLE');pN(c.output_tables,'OUTPUT_TABLE');pN(c.output_files,'OUTPUT_FILE');
+
+  // Persist pending edges
+  if(!S.lncfg.pendingEdges) S.lncfg.pendingEdges=JSON.parse(JSON.stringify(c.lineage_edges||[]));
+  const edges=S.lncfg.pendingEdges;
+
+  const typeBadge={INPUT_FILE:'bgold',STAGING_VIEW:'bb',LOOKUP_TABLE:'bgold',TRANSFORM_SP:'bm',SPLIT_SP:'bm',WORK_TABLE:'bsilv',OUTPUT_TABLE:'bg',OUTPUT_FILE:'bg'};
+  const edgeClr={FILE_LOAD:'color:var(--blue)',INPUT:'color:var(--blue)',LOOKUP:'color:var(--gold)',OUTPUT:'color:var(--green)',EXPORT:'color:var(--green)'};
+  const nodeOpts=allNodes.map(n=>`<option value="${esc(n.id)}">${esc(n.name)} [${esc(n.id)}]</option>`).join('');
+  const edgeTypeOpts=['FILE_LOAD','INPUT','LOOKUP','OUTPUT','EXPORT'].map(t=>`<option>${t}</option>`).join('');
+
+  el.innerHTML=`
+    <div class="alert alert-info" style="font-size:11px"><span class="alert-ico" style="font-size:12px">ℹ</span><div>Editing <code>lineage_edges</code> only. To add/remove nodes (input files, tables, procedures), use the <strong>JSON Editor</strong> tab. Click <strong>Apply & Re-render</strong> to update the Lineage view and config in memory.</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px">
+      <!-- Node reference panel -->
+      <div class="card"><div class="card-hdr"><span class="card-title">Pipeline Nodes <span class="badge bsilv" style="font-size:9px;margin-left:4px">read-only · ${allNodes.length} nodes</span></span></div>
+        <table class="dt"><thead><tr><th>Type</th><th>ID</th><th>Name</th></tr></thead><tbody>
+          ${allNodes.map(n=>`<tr><td><span class="badge ${typeBadge[n.type]||'bl'}" style="font-size:9px">${esc(n.type.replace(/_/g,' '))}</span></td><td style="font-family:var(--mono);font-size:10px;color:var(--text-2)">${esc(n.id)}</td><td style="font-size:11px;color:var(--text-2)">${esc(n.name)}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+      <!-- Edge editor panel -->
+      <div class="card"><div class="card-hdr"><span class="card-title">Lineage Edges</span><span class="badge bb">${edges.length} edges</span></div>
+        <table class="dt"><thead><tr><th>From</th><th>Type</th><th>To</th><th></th></tr></thead><tbody>
+          ${edges.map((e,i)=>`<tr>
+            <td style="font-family:var(--mono);font-size:10px;color:var(--blue)">${esc(e.from)}</td>
+            <td style="font-size:11px;font-weight:600;${edgeClr[e.type]||''}">${esc(e.type)}</td>
+            <td style="font-family:var(--mono);font-size:10px;color:var(--green)">${esc(e.to)}</td>
+            <td><button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="rmLnEdge(${i})" title="Remove edge">×</button></td>
+          </tr>`).join('')}
+        </tbody></table>
+        <!-- Add edge form -->
+        <div class="form-row">
+          <select class="cfg-inp" id="ln-add-from" style="min-width:110px" title="From node">${nodeOpts}</select>
+          <select class="cfg-inp" id="ln-add-type" style="min-width:100px" title="Edge type">${edgeTypeOpts}</select>
+          <select class="cfg-inp" id="ln-add-to"   style="min-width:110px" title="To node">${nodeOpts}</select>
+          <button class="btn btn-gold btn-sm" onclick="addLnEdge()">+ Add</button>
+        </div>
+      </div>
+    </div>
+    <!-- Actions row -->
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-gold" onclick="applyLnCfg()">✓ Apply & Re-render Lineage</button>
+      <button class="btn btn-sec" onclick="dlJSON(S.config,'config.json')">↓ Export config.json</button>
+      <button class="btn btn-ghost btn-sm" onclick="S.lncfg.pendingEdges=null;renderLnCfg()">↺ Revert to Saved</button>
+      <span style="font-size:11px;color:var(--text-2)">Changes apply to config in memory. Export to save permanently.</span>
+    </div>`;
+}
+
+function addLnEdge(){
+  const from=document.getElementById('ln-add-from')?.value;
+  const type=document.getElementById('ln-add-type')?.value;
+  const to=document.getElementById('ln-add-to')?.value;
+  if(!from||!type||!to){alert('Select From, Type and To nodes.');return;}
+  if(from===to){alert('From and To must be different nodes.');return;}
+  if(!S.lncfg.pendingEdges) S.lncfg.pendingEdges=JSON.parse(JSON.stringify(S.config.lineage_edges||[]));
+  S.lncfg.pendingEdges.push({from,type,to});
+  renderLnCfg();
+}
+function rmLnEdge(i){if(S.lncfg.pendingEdges){S.lncfg.pendingEdges.splice(i,1);renderLnCfg();}}
+function applyLnCfg(){
+  if(!S.config||!S.lncfg.pendingEdges)return;
+  S.config.lineage_edges=JSON.parse(JSON.stringify(S.lncfg.pendingEdges));
+  S.lncfg.pendingEdges=null;
+  if(S.tab==='lineage')renderLineage();
+  flash('btn-export-layout','✓ Config Updated','var(--green)','var(--black)');
+  renderLnCfg();
+}
+
+function addWidget(t){const wt=WTYPES.find(w=>w.type===t);S.studio.widgets.push({id:S.studio.nextId++,type:t,title:wt?wt.nm:t,span:wt?wt.span:1});renderStudio();}
+function removeWidget(id){S.studio.widgets=S.studio.widgets.filter(w=>w.id!==id);if(S.studio.selId===id)S.studio.selId=null;renderStudio();}
+function selWidget(id){S.studio.selId=S.studio.selId===id?null:id;renderStudio();}
+function moveWidget(id,dir){const a=S.studio.widgets,i=a.findIndex(w=>w.id===id),j=i+dir;if(i<0||j<0||j>=a.length)return;[a[i],a[j]]=[a[j],a[i]];renderStudio();}
+function updWidget(id,k,v){
+  const w=S.studio.widgets.find(x=>x.id===id);if(!w)return;w[k]=v;
+  if(k==='span'){const el=document.querySelector(`[data-wid="${id}"]`);if(el)el.style.gridColumn=`span ${v}`;}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   JSON EDITOR
+   ═══════════════════════════════════════════════════════════ */
+const ED_NAMES={config:'config.json',recon:'recon_stats.json',anomalies:'anomalies.json'};
+function renderEditor(){edLoad();}
+
+function edLoad(){
+  const ta=document.getElementById('ed-ta');
+  document.getElementById('ed-fname').textContent=ED_NAMES[S.editor]||S.editor+'.json';
+  ta.value=S[S.editor]?JSON.stringify(S[S.editor],null,2):'';
+  edLines(); edValidate();
+  if(S.hlMode){edSyncHL();}else{edShowEdit();}
+}
+function edLines(){
+  const ta=document.getElementById('ed-ta'),ln=document.getElementById('ed-lnum');
+  if(!ta||!ln)return;
+  const n=(ta.value.match(/\n/g)||[]).length+1;
+  ln.textContent=Array.from({length:n},(_,i)=>i+1).join('\n');
+}
+function edValidate(){
+  const ta=document.getElementById('ed-ta'),st=document.getElementById('ed-status');
+  if(!ta||!st)return false;
+  try{JSON.parse(ta.value);st.className='ok';st.textContent='✓ Valid JSON';return true;}
+  catch(e){st.className='err';st.textContent='✕ '+e.message.split('\n')[0].slice(0,55);return false;}
+}
+function edFormat(){
+  const ta=document.getElementById('ed-ta');
+  try{ta.value=JSON.stringify(JSON.parse(ta.value),null,2);edLines();edValidate();if(S.hlMode)edSyncHL();}catch(e){}
+}
+function syntaxHL(raw){
+  // Best-effort regex JSON highlighter — edge cases may render as plain text
+  const e=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return e(raw)
+    .replace(/("(?:[^"\\]|\\.)*")(\s*:)/g,'<span class="jk">$1</span>$2')
+    .replace(/:\s*("(?:[^"\\]|\\.)*")/g,m=>m.replace(/("(?:[^"\\]|\\.)*")/,'<span class="js">$1</span>'))
+    .replace(/:\s*(true|false)\b/g,m=>m.replace(/(true|false)/,'<span class="jb">$1</span>'))
+    .replace(/:\s*(null)\b/g,m=>m.replace(/(null)/,'<span class="jnl">$1</span>'))
+    .replace(/:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g,m=>m.replace(/(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/,'<span class="jn">$1</span>'))
+    .replace(/([{}\[\],])/g,'<span class="jp">$1</span>');
+}
+function edSyncHL(){
+  const ta=document.getElementById('ed-ta'),hl=document.getElementById('ed-hl');
+  ta.style.display='none'; hl.style.display='block';
+  hl.innerHTML=syntaxHL(ta.value);
+  hl.scrollTop=ta.scrollTop;
+  edLines();
+}
+function edShowEdit(){
+  const ta=document.getElementById('ed-ta'),hl=document.getElementById('ed-hl');
+  ta.style.display='block'; hl.style.display='none';
+  ta.focus();
+}
+function edApply(){
+  const ta=document.getElementById('ed-ta');
+  try{
+    const d=JSON.parse(ta.value);
+    S[S.editor]=d;
+    S.lncfg.pendingEdges=null; // invalidate pending edges if config changed
+    renderDash(); renderRecon(); renderAnom(); renderHeader(); updateBadges();
+    if(S.tab==='lineage')renderLineage();
+    if(S.tab==='studio')renderStudio();
+    flash('btn-apply','✓ Applied','var(--green)','var(--black)');
+  }catch(e){alert('Invalid JSON:\n'+e.message);}
+}
+function edExport(){
+  const ta=document.getElementById('ed-ta');
+  try{dlJSON(JSON.parse(ta.value),ED_NAMES[S.editor]||'export.json');}
+  catch(e){const b=new Blob([ta.value],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=ED_NAMES[S.editor];a.click();URL.revokeObjectURL(a.href);}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TABS & BADGES
+   ═══════════════════════════════════════════════════════════ */
+function switchTab(t){
+  S.tab=t;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+t));
+  if(t==='dash')   renderDash();
+  if(t==='lineage')renderLineage();
+  if(t==='recon')  renderRecon();
+  if(t==='anom')   renderAnom();
+  if(t==='studio'){S.stab='canvas';document.querySelectorAll('.stab').forEach(b=>b.classList.toggle('active',b.dataset.stab==='canvas'));document.getElementById('stab-canvas').style.display='block';document.getElementById('stab-lncfg').style.display='none';document.getElementById('studio-gal').style.display='flex';initStudio();}
+  if(t==='editor') renderEditor();
+}
+
+function updateBadges(){
+  const el=document.getElementById('tb-anom');
+  if(!el) return;
+  if(S.anomalies?.summary){
+    const {high,medium,total_anomalies}=S.anomalies.summary;
+    el.textContent=total_anomalies||0;
+    el.className='tab-badge '+(high>0?'err':medium>0?'warn':'');
+  } else {el.textContent='—';el.className='tab-badge';}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DATA LOADING
+   ═══════════════════════════════════════════════════════════ */
+function loadSample(){
+  S.config=JSON.parse(JSON.stringify(SAMPLE.config));
+  S.recon=JSON.parse(JSON.stringify(SAMPLE.recon));
+  S.anomalies=JSON.parse(JSON.stringify(SAMPLE.anomalies));
+  afterLoad();
+}
+
+function afterLoad(){
+  renderHeader(); updateBadges();
+  if(S.tab==='dash')    renderDash();
+  else if(S.tab==='lineage') renderLineage();
+  else if(S.tab==='recon')   renderRecon();
+  else if(S.tab==='anom')    renderAnom();
+  else if(S.tab==='studio')  renderStudio();
+  else if(S.tab==='editor')  edLoad();
+  else renderDash();
+}
+
+function readJSON(file,cb){
+  const r=new FileReader();
+  r.onload=e=>{try{cb(null,JSON.parse(e.target.result));}catch(err){cb(err,null);}};
+  r.readAsText(file);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EVENT LISTENERS
+   ═══════════════════════════════════════════════════════════ */
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+// Studio sub-tabs
+document.querySelectorAll('.stab').forEach(b=>b.addEventListener('click',()=>switchStab(b.dataset.stab)));
+// Load sample
+document.getElementById('btn-sample').addEventListener('click',loadSample);
+
+// File loaders
+document.getElementById('fi-cfg').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;readJSON(f,(err,d)=>{if(err){alert('Invalid JSON: '+err.message);return;}S.config=d;S.lncfg.pendingEdges=null;afterLoad();e.target.value='';});});
+document.getElementById('fi-recon').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;readJSON(f,(err,d)=>{if(err){alert('Invalid JSON: '+err.message);return;}S.recon=d;afterLoad();e.target.value='';});});
+document.getElementById('fi-anom').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;readJSON(f,(err,d)=>{if(err){alert('Invalid JSON: '+err.message);return;}S.anomalies=d;afterLoad();e.target.value='';});});
+
+// Editor file tabs
+document.querySelectorAll('.ef-btn').forEach(b=>{b.addEventListener('click',()=>{S.editor=b.dataset.ed;document.querySelectorAll('.ef-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');edLoad();});});
+
+// Editor textarea
+const edTA=document.getElementById('ed-ta');
+edTA.addEventListener('input',()=>{edLines();edValidate();if(S.hlMode)edSyncHL();});
+edTA.addEventListener('scroll',()=>{
+  document.getElementById('ed-lnum').scrollTop=edTA.scrollTop;
+  const hl=document.getElementById('ed-hl');if(hl)hl.scrollTop=edTA.scrollTop;
+});
+edTA.addEventListener('keydown',e=>{
+  if(e.key==='Tab'){e.preventDefault();const s=edTA.selectionStart,en=edTA.selectionEnd;edTA.value=edTA.value.slice(0,s)+'  '+edTA.value.slice(en);edTA.selectionStart=edTA.selectionEnd=s+2;edLines();}
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();edApply();}
+  if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();edApply();}
+});
+// Drag-drop files onto editor
+edTA.addEventListener('dragover',e=>e.preventDefault());
+edTA.addEventListener('drop',e=>{
+  e.preventDefault();const f=e.dataTransfer.files[0];if(!f)return;
+  const r=new FileReader();r.onload=ev=>{edTA.value=ev.target.result;if(S.hlMode)edSyncHL();else edShowEdit();edLines();edValidate();};r.readAsText(f);
+});
+
+// Editor toolbar buttons
+document.getElementById('btn-hl-toggle').addEventListener('click',()=>{
+  S.hlMode=!S.hlMode;
+  const btn=document.getElementById('btn-hl-toggle');
+  btn.textContent=S.hlMode?'✎ Edit Mode':'⬡ Highlight';
+  btn.style.color=S.hlMode?'var(--gold)':'';
+  if(S.hlMode)edSyncHL(); else edShowEdit();
+});
+document.getElementById('btn-fmt').addEventListener('click',edFormat);
+document.getElementById('btn-validate').addEventListener('click',()=>{
+  const ok=edValidate(), st=document.getElementById('ed-status');
+  st.textContent+=' — checked'; setTimeout(()=>edValidate(),2200);
+});
+document.getElementById('btn-apply').addEventListener('click',edApply);
+document.getElementById('btn-export-ed').addEventListener('click',edExport);
+document.getElementById('btn-export-cfg-lin').addEventListener('click',()=>{if(S.config)dlJSON(S.config,'config.json');else alert('No config loaded.');});
+
+// Import JSON to editor
+document.getElementById('fi-import-ed').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();r.onload=ev=>{edTA.value=ev.target.result;edLines();edValidate();e.target.value='';if(S.hlMode)edSyncHL();};r.readAsText(f);
+});
+
+// Studio export + clear
+document.getElementById('btn-export-layout').addEventListener('click',()=>{
+  dlJSON({version:'1.0',exported_at:new Date().toISOString(),system:S.config?.system?.name||'unknown',widgets:S.studio.widgets},'dashboard_layout.json');
+});
+document.getElementById('btn-clear-layout').addEventListener('click',()=>{
+  if(confirm('Clear all widgets from the canvas?')){S.studio.widgets=[];S.studio.selId=null;renderStudio();}
+});
+
+/* ═══════════════════════════════════════════════════════════
+   INIT — auto-load sample data on startup
+   ═══════════════════════════════════════════════════════════ */
+loadSample();
+</script>
+</body>
+</html>
