@@ -1,0 +1,1372 @@
+<#
+.SYNOPSIS
+    RSA Key Pair Generator & Validator - WinForms GUI
+.DESCRIPTION
+    Generates PKCS#1/PKCS#8 RSA key pairs, validates them (8 checks), produces a styled
+    HTML report, and optionally uploads the results via WinSCP CLI. Wrapped in a
+    "Modern Dark" WinForms GUI with async execution so the UI never freezes.
+.NOTES
+    Run:  .\Generate-KeyPair-GUI.ps1
+    Requires: Windows PowerShell 5.1+ (or PowerShell 7+ on Windows), .NET Framework 4.7.2+ / .NET 6+
+#>
+[CmdletBinding()]
+param(
+    [string]$InitialOutputFolder = (Join-Path $env:USERPROFILE "Documents\RSA-KeyGen"),
+    [string]$InitialReportName   = "RSA-KeyReport",
+    # Internal switch used when this script is dot-sourced from a background runspace
+    # purely to re-import the Logic functions below (no GUI is built in that case).
+    [switch]$DefineFunctionsOnly
+)
+
+# ============================================================================
+#  ASSEMBLIES
+# ============================================================================
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Numerics
+if (-not $DefineFunctionsOnly) {
+    try { [System.Windows.Forms.Application]::EnableVisualStyles() } catch { }
+}
+
+# Explicit references (ensures types resolve even under constrained runspaces)
+$null = [System.IO.Path]
+$null = [System.Security.Cryptography.RSA]
+$null = [System.Numerics.BigInteger]
+
+# ============================================================================
+#  THEME  ("Modern Dark")
+# ============================================================================
+$Theme = [ordered]@{
+    BackDark      = [System.Drawing.Color]::FromArgb(255, 30, 30, 34)
+    BackPanel     = [System.Drawing.Color]::FromArgb(255, 40, 40, 46)
+    BackControl   = [System.Drawing.Color]::FromArgb(255, 52, 52, 60)
+    Border        = [System.Drawing.Color]::FromArgb(255, 70, 70, 80)
+    TextPrimary   = [System.Drawing.Color]::FromArgb(255, 230, 230, 235)
+    TextMuted     = [System.Drawing.Color]::FromArgb(255, 150, 150, 160)
+    Accent        = [System.Drawing.Color]::FromArgb(255, 0, 173, 181)
+    AccentHover   = [System.Drawing.Color]::FromArgb(255, 0, 200, 210)
+    Success       = [System.Drawing.Color]::FromArgb(255, 60, 220, 150)
+    Danger        = [System.Drawing.Color]::FromArgb(255, 235, 90, 90)
+    DangerHover   = [System.Drawing.Color]::FromArgb(255, 255, 110, 110)
+    Warning       = [System.Drawing.Color]::FromArgb(255, 240, 190, 90)
+    FontFamily    = "Segoe UI"
+}
+
+function New-ThemedFont {
+    param([single]$Size = 9.5, [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular)
+    return New-Object System.Drawing.Font($Theme.FontFamily, $Size, $Style)
+}
+
+function Style-Button {
+    param(
+        [System.Windows.Forms.Button]$Button,
+        [System.Drawing.Color]$Back = $Theme.Accent,
+        [System.Drawing.Color]$Hover = $Theme.AccentHover,
+        [System.Drawing.Color]$Fore = [System.Drawing.Color]::White
+    )
+    $Button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $Button.FlatAppearance.BorderSize = 0
+    $Button.BackColor = $Back
+    $Button.ForeColor = $Fore
+    $Button.Font = New-ThemedFont -Size 9.5 -Style ([System.Drawing.FontStyle]::Bold)
+    $Button.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $Button.Height = 34
+    $Button.Add_MouseEnter({ if ($this.Enabled) { $this.BackColor = $Hover } }.GetNewClosure())
+    $Button.Add_MouseLeave({ if ($this.Enabled) { $this.BackColor = $Back } }.GetNewClosure())
+}
+
+function Style-TextBox {
+    param([System.Windows.Forms.Control]$TextBox)
+    $TextBox.BackColor = $Theme.BackControl
+    $TextBox.ForeColor = $Theme.TextPrimary
+    $TextBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $TextBox.Font = New-ThemedFont
+}
+
+function Style-Label {
+    param([System.Windows.Forms.Label]$Label, [switch]$Muted, [switch]$Bold)
+    $Label.ForeColor = if ($Muted) { $Theme.TextMuted } else { $Theme.TextPrimary }
+    $Label.Font = New-ThemedFont -Style ($(if ($Bold) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }))
+    $Label.BackColor = [System.Drawing.Color]::Transparent
+}
+
+function Style-CheckBox {
+    param([System.Windows.Forms.CheckBox]$CheckBox)
+    $CheckBox.ForeColor = $Theme.TextPrimary
+    $CheckBox.Font = New-ThemedFont
+    $CheckBox.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+}
+
+# ============================================================================
+#  BACKEND / LOGIC FUNCTIONS  (pure logic, UI-agnostic)
+# ============================================================================
+
+function ConvertTo-PemBlock {
+    <# Wraps a DER byte[] into a PEM block with 64-char line wrapping. #>
+    param(
+        [Parameter(Mandatory)][byte[]]$DerBytes,
+        [Parameter(Mandatory)][string]$Label
+    )
+    $b64 = [System.Convert]::ToBase64String($DerBytes)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("-----BEGIN $Label-----")
+    for ($i = 0; $i -lt $b64.Length; $i += 64) {
+        $len = [Math]::Min(64, $b64.Length - $i)
+        [void]$sb.AppendLine($b64.Substring($i, $len))
+    }
+    [void]$sb.AppendLine("-----END $Label-----")
+    return $sb.ToString()
+}
+
+function Get-ByteHex {
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    return ([BitConverter]::ToString($Bytes)).Replace("-", "")
+}
+
+function New-RsaArtifact {
+    <#
+        Generates an RSA key pair of the requested size and returns a structured object
+        containing the live RSA instance plus derived material. Caller is responsible for
+        disposing the RSA instance.
+    #>
+    param(
+        [Parameter(Mandatory)][ValidateSet(2048, 3072, 4096, 6144, 8192)][int]$KeySize
+    )
+
+    $rsa = [System.Security.Cryptography.RSA]::Create($KeySize)
+    if ($rsa.KeySize -ne $KeySize) {
+        # Some providers round key size; force explicit key generation if mismatched
+        $rsa.Dispose()
+        $rsa = [System.Security.Cryptography.RSA]::Create()
+        $rsa.KeySize = $KeySize
+    }
+
+    $pkcs8Der = $rsa.ExportPkcs8PrivateKey()
+    $pkcs1PrivDer = $rsa.ExportRSAPrivateKey()
+    $spkiDer = $rsa.ExportSubjectPublicKeyInfo()
+    $pkcs1PubDer = $rsa.ExportRSAPublicKey()
+
+    $rsaParams = $rsa.ExportParameters($false)  # public-only params for modulus/exponent
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fingerprintBytes = $sha256.ComputeHash($spkiDer)
+    } finally {
+        $sha256.Dispose()
+    }
+
+    [pscustomobject]@{
+        Rsa               = $rsa
+        KeySize           = $rsa.KeySize
+        Pkcs8PrivateDer   = $pkcs8Der
+        Pkcs1PrivateDer   = $pkcs1PrivDer
+        SpkiPublicDer     = $spkiDer
+        Pkcs1PublicDer    = $pkcs1PubDer
+        Modulus           = $rsaParams.Modulus
+        Exponent          = $rsaParams.Exponent
+        FingerprintBytes  = $fingerprintBytes
+        FingerprintBase64 = [System.Convert]::ToBase64String($fingerprintBytes)
+        FingerprintHex    = (Get-ByteHex -Bytes $fingerprintBytes) -replace '(..)(?=.)', '$1:'
+    }
+}
+
+function Export-KeyPairFiles {
+    <# Writes the 4 PEM files to disk. Returns a hashtable of file paths. #>
+    param(
+        [Parameter(Mandatory)]$Artifact,
+        [Parameter(Mandatory)][string]$OutputFolder,
+        [Parameter(Mandatory)][string]$BaseName,
+        [switch]$Overwrite
+    )
+
+    if (-not (Test-Path -LiteralPath $OutputFolder)) {
+        New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
+    }
+
+    $paths = [ordered]@{
+        Pkcs8Private = Join-Path $OutputFolder "$BaseName.private.pkcs8.pem"
+        Pkcs1Private = Join-Path $OutputFolder "$BaseName.private.pkcs1.pem"
+        SpkiPublic   = Join-Path $OutputFolder "$BaseName.public.spki.pem"
+        Pkcs1Public  = Join-Path $OutputFolder "$BaseName.public.pkcs1.pem"
+        HtmlReport   = Join-Path $OutputFolder "$BaseName.report.html"
+    }
+
+    foreach ($key in @('Pkcs8Private', 'Pkcs1Private', 'SpkiPublic', 'Pkcs1Public')) {
+        if ((Test-Path -LiteralPath $paths[$key]) -and -not $Overwrite) {
+            throw "File already exists and 'Overwrite' is not enabled: $($paths[$key])"
+        }
+    }
+
+    [System.IO.File]::WriteAllText($paths.Pkcs8Private, (ConvertTo-PemBlock -DerBytes $Artifact.Pkcs8PrivateDer -Label "PRIVATE KEY"))
+    [System.IO.File]::WriteAllText($paths.Pkcs1Private, (ConvertTo-PemBlock -DerBytes $Artifact.Pkcs1PrivateDer -Label "RSA PRIVATE KEY"))
+    [System.IO.File]::WriteAllText($paths.SpkiPublic, (ConvertTo-PemBlock -DerBytes $Artifact.SpkiPublicDer -Label "PUBLIC KEY"))
+    [System.IO.File]::WriteAllText($paths.Pkcs1Public, (ConvertTo-PemBlock -DerBytes $Artifact.Pkcs1PublicDer -Label "RSA PUBLIC KEY"))
+
+    return $paths
+}
+
+function Test-KeyPairValidity {
+    <#
+        Performs 8 validation checks against the generated key material.
+        Returns an array of result objects: Name, Passed, Detail
+    #>
+    param(
+        [Parameter(Mandatory)]$Artifact,
+        [Parameter(Mandatory)][int]$RequestedKeySize
+    )
+
+    $results = New-Object System.Collections.Generic.List[object]
+
+    # --- Check 1: Re-import PKCS#8 private key ---
+    $reimportedPkcs8 = $null
+    try {
+        $reimportedPkcs8 = [System.Security.Cryptography.RSA]::Create()
+        $reimportedPkcs8.ImportPkcs8PrivateKey($Artifact.Pkcs8PrivateDer, [ref]0)
+        $results.Add([pscustomobject]@{ Name = "Re-import PKCS#8 Private Key"; Passed = $true;  Detail = "Successfully parsed PKCS#8 DER structure." })
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Re-import PKCS#8 Private Key"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 2: Re-import PKCS#1 private key ---
+    $reimportedPkcs1 = $null
+    try {
+        $reimportedPkcs1 = [System.Security.Cryptography.RSA]::Create()
+        $reimportedPkcs1.ImportRSAPrivateKey($Artifact.Pkcs1PrivateDer, [ref]0)
+        $results.Add([pscustomobject]@{ Name = "Re-import PKCS#1 Private Key"; Passed = $true;  Detail = "Successfully parsed PKCS#1 DER structure." })
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Re-import PKCS#1 Private Key"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 3: Re-import SPKI public key ---
+    $reimportedSpki = $null
+    try {
+        $reimportedSpki = [System.Security.Cryptography.RSA]::Create()
+        $reimportedSpki.ImportSubjectPublicKeyInfo($Artifact.SpkiPublicDer, [ref]0)
+        $results.Add([pscustomobject]@{ Name = "Re-import SPKI Public Key"; Passed = $true; Detail = "Successfully parsed SubjectPublicKeyInfo structure." })
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Re-import SPKI Public Key"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 4: Re-import PKCS#1 public key ---
+    $reimportedPkcs1Pub = $null
+    try {
+        $reimportedPkcs1Pub = [System.Security.Cryptography.RSA]::Create()
+        $reimportedPkcs1Pub.ImportRSAPublicKey($Artifact.Pkcs1PublicDer, [ref]0)
+        $results.Add([pscustomobject]@{ Name = "Re-import PKCS#1 Public Key"; Passed = $true; Detail = "Successfully parsed RSAPublicKey DER structure." })
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Re-import PKCS#1 Public Key"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 5: Modulus match across all re-imported representations ---
+    try {
+        $originalModHex = Get-ByteHex -Bytes $Artifact.Modulus
+        $allMatch = $true
+        $mismatchDetail = @()
+        foreach ($pair in @(
+            @{ Name = "PKCS#8";      Rsa = $reimportedPkcs8 },
+            @{ Name = "PKCS#1 Priv"; Rsa = $reimportedPkcs1 },
+            @{ Name = "SPKI";        Rsa = $reimportedSpki },
+            @{ Name = "PKCS#1 Pub";  Rsa = $reimportedPkcs1Pub }
+        )) {
+            if ($null -eq $pair.Rsa) { $allMatch = $false; $mismatchDetail += "$($pair.Name): not available"; continue }
+            $modHex = Get-ByteHex -Bytes ($pair.Rsa.ExportParameters($false).Modulus)
+            if ($modHex -ne $originalModHex) { $allMatch = $false; $mismatchDetail += "$($pair.Name): modulus mismatch" }
+        }
+        if ($allMatch) {
+            $results.Add([pscustomobject]@{ Name = "Modulus Match (All Formats)"; Passed = $true; Detail = "Modulus identical across PKCS#8, PKCS#1, SPKI representations." })
+        } else {
+            $results.Add([pscustomobject]@{ Name = "Modulus Match (All Formats)"; Passed = $false; Detail = ($mismatchDetail -join "; ") })
+        }
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Modulus Match (All Formats)"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 6: Public exponent match ---
+    try {
+        $originalExpHex = Get-ByteHex -Bytes $Artifact.Exponent
+        $expMatch = $true
+        foreach ($pair in @(
+            @{ Name = "SPKI";       Rsa = $reimportedSpki },
+            @{ Name = "PKCS#1 Pub"; Rsa = $reimportedPkcs1Pub }
+        )) {
+            if ($null -eq $pair.Rsa) { $expMatch = $false; continue }
+            $expHex = Get-ByteHex -Bytes ($pair.Rsa.ExportParameters($false).Exponent)
+            if ($expHex -ne $originalExpHex) { $expMatch = $false }
+        }
+        if ($expMatch) {
+            $results.Add([pscustomobject]@{ Name = "Public Exponent Match"; Passed = $true; Detail = "Exponent (0x$originalExpHex) consistent across formats." })
+        } else {
+            $results.Add([pscustomobject]@{ Name = "Public Exponent Match"; Passed = $false; Detail = "Exponent mismatch detected between representations." })
+        }
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Public Exponent Match"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 7: SHA-256 signature round-trip (sign w/ private, verify w/ public) ---
+    try {
+        $testData = [System.Text.Encoding]::UTF8.GetBytes("RSA-KeyGen-Validation-Payload::$(Get-Date -Format o)")
+        $padding = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+        $hashAlg = [System.Security.Cryptography.HashAlgorithmName]::SHA256
+
+        $signature = $Artifact.Rsa.SignData($testData, $hashAlg, $padding)
+
+        $verifyRsa = [System.Security.Cryptography.RSA]::Create()
+        $verifyRsa.ImportSubjectPublicKeyInfo($Artifact.SpkiPublicDer, [ref]0)
+        $verified = $verifyRsa.VerifyData($testData, $signature, $hashAlg, $padding)
+        $verifyRsa.Dispose()
+
+        if ($verified) {
+            $results.Add([pscustomobject]@{ Name = "SHA-256 Signature Round-Trip"; Passed = $true; Detail = "Signature created with private key verified successfully using public key." })
+        } else {
+            $results.Add([pscustomobject]@{ Name = "SHA-256 Signature Round-Trip"; Passed = $false; Detail = "Signature verification failed." })
+        }
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "SHA-256 Signature Round-Trip"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # --- Check 8: Key size matches requested size ---
+    try {
+        if ($Artifact.KeySize -eq $RequestedKeySize) {
+            $results.Add([pscustomobject]@{ Name = "Key Size Verification"; Passed = $true; Detail = "Generated key size ($($Artifact.KeySize)-bit) matches requested size." })
+        } else {
+            $results.Add([pscustomobject]@{ Name = "Key Size Verification"; Passed = $false; Detail = "Requested $RequestedKeySize-bit but got $($Artifact.KeySize)-bit." })
+        }
+    } catch {
+        $results.Add([pscustomobject]@{ Name = "Key Size Verification"; Passed = $false; Detail = $_.Exception.Message })
+    }
+
+    # Cleanup re-imported RSA instances
+    foreach ($r in @($reimportedPkcs8, $reimportedPkcs1, $reimportedSpki, $reimportedPkcs1Pub)) {
+        if ($r) { $r.Dispose() }
+    }
+
+    return $results
+}
+
+function New-HtmlReport {
+    <# Builds a styled, self-contained HTML report string. #>
+    param(
+        [Parameter(Mandatory)]$Artifact,
+        [Parameter(Mandatory)][int]$RequestedKeySize,
+        [Parameter(Mandatory)][array]$ValidationResults,
+        [Parameter(Mandatory)][string]$BaseName,
+        [hashtable]$FilePaths
+    )
+
+    $passCount = ($ValidationResults | Where-Object { $_.Passed }).Count
+    $totalCount = $ValidationResults.Count
+    $allPassed = ($passCount -eq $totalCount)
+    $overallColor = if ($allPassed) { "#3cdc96" } else { "#eb5a5a" }
+    $overallText = if ($allPassed) { "ALL CHECKS PASSED" } else { "VALIDATION ISSUES DETECTED" }
+
+    # Modulus hex, chunked for readability (guard against very large 8192-bit moduli)
+    $modulusHex = Get-ByteHex -Bytes $Artifact.Modulus
+    $modulusChunks = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $modulusHex.Length; $i += 64) {
+        $len = [Math]::Min(64, $modulusHex.Length - $i)
+        $modulusChunks.Add($modulusHex.Substring($i, $len))
+    }
+    $modulusHtml = ($modulusChunks -join "`n")
+
+    $rowsHtml = New-Object System.Text.StringBuilder
+    foreach ($r in $ValidationResults) {
+        $statusClass = if ($r.Passed) { "pass" } else { "fail" }
+        $statusText  = if ($r.Passed) { "PASS" } else { "FAIL" }
+        # System.Net.WebUtility is used (rather than System.Web.HttpUtility) because it is
+        # available out-of-the-box on both Windows PowerShell 5.1 (.NET Framework) and
+        # PowerShell 7+ (.NET), with no extra assembly load required.
+        $safeDetail = [System.Net.WebUtility]::HtmlEncode($r.Detail)
+        $safeName = [System.Net.WebUtility]::HtmlEncode($r.Name)
+        [void]$rowsHtml.AppendLine("<tr><td>$safeName</td><td class=`"status $statusClass`">$statusText</td><td>$safeDetail</td></tr>")
+    }
+
+    $generatedOn = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RSA Key Report - $BaseName</title>
+<style>
+  :root {
+    --bg: #1e1e22; --panel: #28282e; --border: #46465080;
+    --text: #e6e6eb; --muted: #96969a; --accent: #00adb5;
+    --pass: #3cdc96; --fail: #eb5a5a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    background: linear-gradient(180deg, #1a1a1e 0%, #202024 100%);
+    color: var(--text); margin: 0; padding: 40px 20px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  .header { text-align: center; margin-bottom: 30px; }
+  .header h1 { font-size: 26px; margin-bottom: 4px; }
+  .header p { color: var(--muted); margin: 0; }
+  .badge {
+    display: inline-block; margin-top: 14px; padding: 8px 20px; border-radius: 20px;
+    font-weight: 600; font-size: 13px; letter-spacing: 0.5px;
+    background: color-mix(in srgb, $overallColor 18%, transparent);
+    color: $overallColor; border: 1px solid $overallColor;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px 26px; margin-bottom: 22px;
+  }
+  .card h2 {
+    font-size: 15px; text-transform: uppercase; letter-spacing: 0.8px;
+    color: var(--accent); margin-top: 0; margin-bottom: 16px;
+    border-bottom: 1px solid var(--border); padding-bottom: 10px;
+  }
+  .grid { display: grid; grid-template-columns: 200px 1fr; gap: 10px 16px; font-size: 14px; }
+  .grid dt { color: var(--muted); }
+  .grid dd { margin: 0; font-family: Consolas, monospace; word-break: break-all; }
+  pre.mono {
+    background: #16161a; border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px; font-family: Consolas, monospace; font-size: 12.5px;
+    overflow-x: auto; white-space: pre-wrap; word-break: break-all; color: #d8d8de;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11.5px; letter-spacing: 0.5px; }
+  td.status { font-weight: 700; }
+  td.status.pass { color: var(--pass); }
+  td.status.fail { color: var(--fail); }
+  .footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>&#128273; RSA Key Pair Report</h1>
+    <p>$BaseName &middot; Generated $generatedOn</p>
+    <div class="badge">$overallText ($passCount / $totalCount)</div>
+  </div>
+
+  <div class="card">
+    <h2>Key Details</h2>
+    <dl class="grid">
+      <dt>Key Size</dt><dd>$($Artifact.KeySize) bits</dd>
+      <dt>Requested Size</dt><dd>$RequestedKeySize bits</dd>
+      <dt>Public Exponent</dt><dd>0x$(Get-ByteHex -Bytes $Artifact.Exponent)</dd>
+      <dt>SHA-256 Fingerprint (Base64)</dt><dd>$($Artifact.FingerprintBase64)</dd>
+      <dt>SHA-256 Fingerprint (Hex)</dt><dd>$($Artifact.FingerprintHex)</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h2>Modulus</h2>
+    <pre class="mono">$modulusHtml</pre>
+  </div>
+
+  <div class="card">
+    <h2>Validation Results</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>
+$($rowsHtml.ToString())
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">Generated by RSA Key Pair Generator GUI &middot; $generatedOn</div>
+</div>
+</body>
+</html>
+"@
+
+    return $html
+}
+
+function Invoke-WinScpUpload {
+    <#
+        Uploads the given files via WinSCP CLI using a temporary script file.
+        Throws on failure; returns the process output on success.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$WinScpExePath,
+        [Parameter(Mandatory)][string]$ConnectionString,
+        [Parameter(Mandatory)][string[]]$FilesToUpload,
+        [Parameter(Mandatory)][scriptblock]$LogAction
+    )
+
+    if (-not (Test-Path -LiteralPath $WinScpExePath)) {
+        throw "WinSCP executable not found at: $WinScpExePath"
+    }
+
+    $missing = $FilesToUpload | Where-Object { -not (Test-Path -LiteralPath $_) }
+    if ($missing) {
+        throw "Cannot upload - missing local file(s): $($missing -join ', ')"
+    }
+
+    $tempScript = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "winscp_$([Guid]::NewGuid().ToString('N')).txt")
+
+    try {
+        $scriptLines = New-Object System.Collections.Generic.List[string]
+        [void]$scriptLines.Add("option batch abort")
+        [void]$scriptLines.Add("option confirm off")
+        [void]$scriptLines.Add("open `"$ConnectionString`"")
+        foreach ($f in $FilesToUpload) {
+            [void]$scriptLines.Add("put `"$f`"")
+        }
+        [void]$scriptLines.Add("close")
+        [void]$scriptLines.Add("exit")
+
+        [System.IO.File]::WriteAllLines($tempScript, $scriptLines)
+        $LogAction.Invoke("Temporary WinSCP script created: $tempScript")
+
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $WinScpExePath
+        $psi.Arguments = "/script=`"$tempScript`" /log=`"$tempScript.log`""
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+
+        if ($proc.ExitCode -ne 0) {
+            throw "WinSCP exited with code $($proc.ExitCode). Output: $stdout $stderr"
+        }
+
+        return $stdout
+    }
+    finally {
+        # Always clean up the temporary script file, even on failure
+        if (Test-Path -LiteralPath $tempScript) {
+            Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
+        }
+        $logFile = "$tempScript.log"
+        if (Test-Path -LiteralPath $logFile) {
+            Remove-Item -LiteralPath $logFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ============================================================================
+#  MAIN ORCHESTRATION  (runs on background thread)
+# ============================================================================
+
+function Start-KeyGenerationPipeline {
+    <#
+        Full pipeline: generate -> export -> validate -> report -> (optional) upload.
+        $Log is a scriptblock: { param($msg, $level) ... } where level in Info/Success/Error/Warning
+        $ReportProgress is a scriptblock: { param($pct, $status) ... }
+        $ShouldCancel is a scriptblock returning $true/$false
+    #>
+    param(
+        [Parameter(Mandatory)][hashtable]$Config,
+        [Parameter(Mandatory)][scriptblock]$Log,
+        [Parameter(Mandatory)][scriptblock]$ReportProgress,
+        [Parameter(Mandatory)][scriptblock]$ShouldCancel
+    )
+
+    $artifact = $null
+    try {
+        $Log.Invoke("Starting key generation pipeline...", "Info")
+        $ReportProgress.Invoke(5, "Validating configuration...")
+
+        # --- Validate configuration up front ---
+        if ([string]::IsNullOrWhiteSpace($Config.OutputFolder)) { throw "Output folder is required." }
+        if ([string]::IsNullOrWhiteSpace($Config.BaseName)) { throw "Report base name is required." }
+
+        if ($Config.EnableWinScp) {
+            if ([string]::IsNullOrWhiteSpace($Config.WinScpPath)) { throw "WinSCP executable path is required when upload is enabled." }
+            if (-not (Test-Path -LiteralPath $Config.WinScpPath)) { throw "WinSCP executable not found at: $($Config.WinScpPath)" }
+            if ([string]::IsNullOrWhiteSpace($Config.WinScpConnection)) { throw "WinSCP connection string is required when upload is enabled." }
+        }
+
+        if ($ShouldCancel.Invoke()) { $Log.Invoke("Cancelled before generation began.", "Warning"); return }
+
+        # --- Ensure output folder exists ---
+        if (-not (Test-Path -LiteralPath $Config.OutputFolder)) {
+            $Log.Invoke("Output folder does not exist. Creating: $($Config.OutputFolder)", "Info")
+            New-Item -ItemType Directory -Path $Config.OutputFolder -Force | Out-Null
+        }
+
+        # --- Generate key pair ---
+        $ReportProgress.Invoke(15, "Generating $($Config.KeySize)-bit RSA key pair...")
+        $Log.Invoke("Generating $($Config.KeySize)-bit RSA key pair (this may take a while for large key sizes)...", "Info")
+        $artifact = New-RsaArtifact -KeySize $Config.KeySize
+        $Log.Invoke("Key pair generated successfully.", "Success")
+
+        if ($ShouldCancel.Invoke()) { $Log.Invoke("Cancelled after key generation.", "Warning"); return }
+
+        # --- Export PEM files ---
+        $ReportProgress.Invoke(40, "Exporting PEM files...")
+        $Log.Invoke("Exporting PKCS#8 / PKCS#1 / SPKI PEM files to: $($Config.OutputFolder)", "Info")
+        $paths = Export-KeyPairFiles -Artifact $artifact -OutputFolder $Config.OutputFolder -BaseName $Config.BaseName -Overwrite:$Config.Overwrite
+        $Log.Invoke("  - $($paths.Pkcs8Private)", "Info")
+        $Log.Invoke("  - $($paths.Pkcs1Private)", "Info")
+        $Log.Invoke("  - $($paths.SpkiPublic)", "Info")
+        $Log.Invoke("  - $($paths.Pkcs1Public)", "Info")
+        $Log.Invoke("PEM files exported.", "Success")
+
+        if ($ShouldCancel.Invoke()) { $Log.Invoke("Cancelled after export.", "Warning"); return }
+
+        # --- Validate ---
+        $ReportProgress.Invoke(65, "Running validation checks...")
+        $Log.Invoke("Running 8-point validation suite...", "Info")
+        $validationResults = Test-KeyPairValidity -Artifact $artifact -RequestedKeySize $Config.KeySize
+        foreach ($r in $validationResults) {
+            $level = if ($r.Passed) { "Success" } else { "Error" }
+            $icon = if ($r.Passed) { "[PASS]" } else { "[FAIL]" }
+            $Log.Invoke("$icon $($r.Name) - $($r.Detail)", $level)
+        }
+        $failCount = ($validationResults | Where-Object { -not $_.Passed }).Count
+        if ($failCount -gt 0) {
+            $Log.Invoke("$failCount validation check(s) failed. Review the report for details.", "Warning")
+        } else {
+            $Log.Invoke("All validation checks passed.", "Success")
+        }
+
+        if ($ShouldCancel.Invoke()) { $Log.Invoke("Cancelled after validation.", "Warning"); return }
+
+        # --- HTML report ---
+        $ReportProgress.Invoke(85, "Generating HTML report...")
+        $Log.Invoke("Building HTML report...", "Info")
+        $htmlContent = New-HtmlReport -Artifact $artifact -RequestedKeySize $Config.KeySize -ValidationResults $validationResults -BaseName $Config.BaseName -FilePaths $paths
+        [System.IO.File]::WriteAllText($paths.HtmlReport, $htmlContent)
+        $Log.Invoke("HTML report written to: $($paths.HtmlReport)", "Success")
+
+        if ($Config.OpenReport) {
+            try {
+                Start-Process -FilePath $paths.HtmlReport
+                $Log.Invoke("Opened report in default browser.", "Info")
+            } catch {
+                $Log.Invoke("Could not auto-open report: $($_.Exception.Message)", "Warning")
+            }
+        }
+
+        if ($ShouldCancel.Invoke()) { $Log.Invoke("Cancelled before upload.", "Warning"); return }
+
+        # --- Optional WinSCP upload ---
+        if ($Config.EnableWinScp) {
+            $ReportProgress.Invoke(93, "Uploading via WinSCP...")
+            $Log.Invoke("Starting WinSCP upload...", "Info")
+            $filesToUpload = @($paths.Pkcs8Private, $paths.Pkcs1Private, $paths.SpkiPublic, $paths.Pkcs1Public, $paths.HtmlReport)
+            try {
+                $uploadOutput = Invoke-WinScpUpload -WinScpExePath $Config.WinScpPath -ConnectionString $Config.WinScpConnection -FilesToUpload $filesToUpload -LogAction $Log
+                $Log.Invoke("WinSCP upload completed successfully.", "Success")
+            } catch {
+                $Log.Invoke("WinSCP upload failed: $($_.Exception.Message)", "Error")
+                $Log.Invoke("Key generation succeeded, but upload did not complete. Files remain available locally.", "Warning")
+            }
+        }
+
+        $ReportProgress.Invoke(100, "Complete.")
+        $Log.Invoke("Pipeline complete.", "Success")
+    }
+    catch {
+        $Log.Invoke("FATAL ERROR: $($_.Exception.Message)", "Error")
+        $Log.Invoke($_.ScriptStackTrace, "Error")
+        throw
+    }
+    finally {
+        if ($artifact -and $artifact.Rsa) {
+            $artifact.Rsa.Dispose()
+            $Log.Invoke("RSA resources disposed.", "Info")
+        }
+    }
+}
+
+# ============================================================================
+#  LOGGING HELPER  (thread-safe; callable from any thread, including the
+#  background runspace, since it's defined before the DefineFunctionsOnly
+#  early-return below)
+# ============================================================================
+function Write-GuiLog {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.RichTextBox]$LogControl,
+        [Parameter(Mandatory)][string]$Message,
+        [ValidateSet("Info", "Success", "Error", "Warning")][string]$Level = "Info"
+    )
+
+    $color = switch ($Level) {
+        "Success" { [System.Drawing.Color]::FromArgb(255, 60, 220, 150) }
+        "Error"   { [System.Drawing.Color]::FromArgb(255, 235, 90, 90) }
+        "Warning" { [System.Drawing.Color]::FromArgb(255, 240, 190, 90) }
+        default   { [System.Drawing.Color]::FromArgb(255, 190, 220, 235) }
+    }
+    $timestamp = Get-Date -Format "HH:mm:ss"
+    $line = "[$timestamp] $Message`n"
+
+    $writeAction = {
+        param($ctrl, $text, $col)
+        $ctrl.SelectionStart = $ctrl.TextLength
+        $ctrl.SelectionLength = 0
+        $ctrl.SelectionColor = $col
+        $ctrl.AppendText($text)
+        $ctrl.ScrollToCaret()
+    }
+
+    if ($LogControl.InvokeRequired) {
+        $LogControl.Invoke([Action[object, object, object]]$writeAction, @($LogControl, $line, $color)) | Out-Null
+    } else {
+        & $writeAction $LogControl $line $color
+    }
+}
+
+# ============================================================================
+#  EARLY EXIT FOR BACKGROUND RUNSPACE FUNCTION RE-IMPORT
+#  When this script is dot-sourced with -DefineFunctionsOnly (used by the background
+#  worker runspace to reuse the exact same tested Logic functions above), stop here
+#  without constructing any GUI objects.
+# ============================================================================
+if ($DefineFunctionsOnly) {
+    return
+}
+
+# ============================================================================
+#  GUI CONSTRUCTION
+# ============================================================================
+
+# ---- Main Form ----
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "RSA Key Pair Generator"
+$form.Size = New-Object System.Drawing.Size(880, 680)
+$form.MinimumSize = New-Object System.Drawing.Size(760, 560)
+$form.StartPosition = "CenterScreen"
+$form.BackColor = $Theme.BackDark
+$form.Font = New-ThemedFont
+$form.Icon = [System.Drawing.SystemIcons]::Shield
+
+# ---- Header ----
+$headerPanel = New-Object System.Windows.Forms.Panel
+$headerPanel.Dock = [System.Windows.Forms.DockStyle]::Top
+$headerPanel.Height = 60
+$headerPanel.BackColor = $Theme.BackPanel
+
+$titleLabel = New-Object System.Windows.Forms.Label
+$titleLabel.Text = "RSA Key Pair Generator"
+$titleLabel.Font = New-ThemedFont -Size 16 -Style ([System.Drawing.FontStyle]::Bold)
+$titleLabel.ForeColor = $Theme.TextPrimary
+$titleLabel.AutoSize = $true
+$titleLabel.Location = New-Object System.Drawing.Point(20, 12)
+$headerPanel.Controls.Add($titleLabel)
+
+$subtitleLabel = New-Object System.Windows.Forms.Label
+$subtitleLabel.Text = "PKCS#1 / PKCS#8 &middot; Validation &middot; HTML Report &middot; WinSCP Upload" -replace '&middot;', ([char]0x00B7)
+$subtitleLabel.Font = New-ThemedFont -Size 8.5
+$subtitleLabel.ForeColor = $Theme.TextMuted
+$subtitleLabel.AutoSize = $true
+$subtitleLabel.Location = New-Object System.Drawing.Point(22, 38)
+$headerPanel.Controls.Add($subtitleLabel)
+
+$form.Controls.Add($headerPanel)
+
+# ---- Bottom action bar (created before TabControl so TabControl can fill remaining space) ----
+$actionPanel = New-Object System.Windows.Forms.Panel
+$actionPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$actionPanel.Height = 92
+$actionPanel.BackColor = $Theme.BackPanel
+
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Location = New-Object System.Drawing.Point(20, 16)
+$progressBar.Size = New-Object System.Drawing.Size(520, 22)
+$progressBar.Style = [System.Windows.Forms.ProgressBarStyle]::Continuous
+$progressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$actionPanel.Controls.Add($progressBar)
+
+$statusLabel = New-Object System.Windows.Forms.Label
+$statusLabel.Text = "Ready."
+$statusLabel.Location = New-Object System.Drawing.Point(20, 42)
+$statusLabel.AutoSize = $true
+Style-Label -Label $statusLabel -Muted
+$statusLabel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
+$actionPanel.Controls.Add($statusLabel)
+
+$generateButton = New-Object System.Windows.Forms.Button
+$generateButton.Text = "&#9889; Generate Keys" -replace '&#9889;', ([char]0x26A1)
+$generateButton.Location = New-Object System.Drawing.Point(20, 68)
+$generateButton.Size = New-Object System.Drawing.Size(170, 34)
+$generateButton.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
+Style-Button -Button $generateButton -Back $Theme.Accent -Hover $Theme.AccentHover
+$actionPanel.Controls.Add($generateButton)
+
+$cancelButton = New-Object System.Windows.Forms.Button
+$cancelButton.Text = "&#9632; Cancel" -replace '&#9632;', ([char]0x25A0)
+$cancelButton.Location = New-Object System.Drawing.Point(200, 68)
+$cancelButton.Size = New-Object System.Drawing.Size(120, 34)
+$cancelButton.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
+$cancelButton.Enabled = $false
+Style-Button -Button $cancelButton -Back $Theme.Danger -Hover $Theme.DangerHover
+$actionPanel.Controls.Add($cancelButton)
+
+$form.Controls.Add($actionPanel)
+
+# ---- Tab Control ----
+$tabControl = New-Object System.Windows.Forms.TabControl
+$tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tabControl.Font = New-ThemedFont -Size 9.5
+
+$tabConfig = New-Object System.Windows.Forms.TabPage
+$tabConfig.Text = "  Configuration  "
+$tabConfig.BackColor = $Theme.BackDark
+
+$tabWinScp = New-Object System.Windows.Forms.TabPage
+$tabWinScp.Text = "  WinSCP Integration  "
+$tabWinScp.BackColor = $Theme.BackDark
+
+$tabLogs = New-Object System.Windows.Forms.TabPage
+$tabLogs.Text = "  Output & Logs  "
+$tabLogs.BackColor = $Theme.BackDark
+
+$tabControl.Controls.Add($tabConfig)
+$tabControl.Controls.Add($tabWinScp)
+$tabControl.Controls.Add($tabLogs)
+$form.Controls.Add($tabControl)
+$tabControl.BringToFront()
+
+# ============================================================================
+#  TAB 1: CONFIGURATION
+# ============================================================================
+$cfgPanel = New-Object System.Windows.Forms.Panel
+$cfgPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$cfgPanel.Padding = New-Object System.Windows.Forms.Padding(24)
+$cfgPanel.AutoScroll = $true
+$tabConfig.Controls.Add($cfgPanel)
+
+$y = 20
+
+# Key Size
+$lblKeySize = New-Object System.Windows.Forms.Label
+$lblKeySize.Text = "Key Size (bits)"
+$lblKeySize.Location = New-Object System.Drawing.Point(0, $y)
+$lblKeySize.AutoSize = $true
+Style-Label -Label $lblKeySize -Bold
+$cfgPanel.Controls.Add($lblKeySize)
+$y += 24
+
+$cmbKeySize = New-Object System.Windows.Forms.ComboBox
+$cmbKeySize.Location = New-Object System.Drawing.Point(0, $y)
+$cmbKeySize.Size = New-Object System.Drawing.Size(200, 28)
+$cmbKeySize.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+[void]$cmbKeySize.Items.AddRange(@("2048", "3072", "4096", "6144", "8192"))
+$cmbKeySize.SelectedItem = "3072"
+Style-TextBox -TextBox $cmbKeySize
+$cfgPanel.Controls.Add($cmbKeySize)
+$y += 46
+
+# Output Folder
+$lblOutFolder = New-Object System.Windows.Forms.Label
+$lblOutFolder.Text = "Output Folder"
+$lblOutFolder.Location = New-Object System.Drawing.Point(0, $y)
+$lblOutFolder.AutoSize = $true
+Style-Label -Label $lblOutFolder -Bold
+$cfgPanel.Controls.Add($lblOutFolder)
+$y += 24
+
+$txtOutFolder = New-Object System.Windows.Forms.TextBox
+$txtOutFolder.Location = New-Object System.Drawing.Point(0, $y)
+$txtOutFolder.Size = New-Object System.Drawing.Size(560, 28)
+$txtOutFolder.Text = $InitialOutputFolder
+$txtOutFolder.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+Style-TextBox -TextBox $txtOutFolder
+$cfgPanel.Controls.Add($txtOutFolder)
+
+$btnBrowse = New-Object System.Windows.Forms.Button
+$btnBrowse.Text = "Browse..."
+$btnBrowse.Location = New-Object System.Drawing.Point(570, ($y - 1))
+$btnBrowse.Size = New-Object System.Drawing.Size(100, 30)
+$btnBrowse.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+Style-Button -Button $btnBrowse -Back $Theme.BackControl -Hover $Theme.Border -Fore $Theme.TextPrimary
+$cfgPanel.Controls.Add($btnBrowse)
+$y += 46
+
+# Report Base Name
+$lblReportName = New-Object System.Windows.Forms.Label
+$lblReportName.Text = "Report Base Name"
+$lblReportName.Location = New-Object System.Drawing.Point(0, $y)
+$lblReportName.AutoSize = $true
+Style-Label -Label $lblReportName -Bold
+$cfgPanel.Controls.Add($lblReportName)
+$y += 24
+
+$txtBaseName = New-Object System.Windows.Forms.TextBox
+$txtBaseName.Location = New-Object System.Drawing.Point(0, $y)
+$txtBaseName.Size = New-Object System.Drawing.Size(300, 28)
+$txtBaseName.Text = $InitialReportName
+Style-TextBox -TextBox $txtBaseName
+$cfgPanel.Controls.Add($txtBaseName)
+$y += 46
+
+# Checkboxes
+$chkOverwrite = New-Object System.Windows.Forms.CheckBox
+$chkOverwrite.Text = "Overwrite existing files"
+$chkOverwrite.Location = New-Object System.Drawing.Point(0, $y)
+$chkOverwrite.AutoSize = $true
+Style-CheckBox -CheckBox $chkOverwrite
+$cfgPanel.Controls.Add($chkOverwrite)
+$y += 32
+
+$chkOpenReport = New-Object System.Windows.Forms.CheckBox
+$chkOpenReport.Text = "Open report in browser after generation"
+$chkOpenReport.Location = New-Object System.Drawing.Point(0, $y)
+$chkOpenReport.AutoSize = $true
+$chkOpenReport.Checked = $true
+Style-CheckBox -CheckBox $chkOpenReport
+$cfgPanel.Controls.Add($chkOpenReport)
+$y += 40
+
+$infoBox = New-Object System.Windows.Forms.Label
+$infoBox.Text = "This will generate 4 PEM files (PKCS#8 private, PKCS#1 private, SPKI public, PKCS#1 public) plus an HTML validation report in the folder above."
+$infoBox.Location = New-Object System.Drawing.Point(0, $y)
+$infoBox.Size = New-Object System.Drawing.Size(600, 40)
+Style-Label -Label $infoBox -Muted
+$cfgPanel.Controls.Add($infoBox)
+
+# ============================================================================
+#  TAB 2: WINSCP INTEGRATION
+# ============================================================================
+$wsPanel = New-Object System.Windows.Forms.Panel
+$wsPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$wsPanel.Padding = New-Object System.Windows.Forms.Padding(24)
+$wsPanel.AutoScroll = $true
+$tabWinScp.Controls.Add($wsPanel)
+
+$wy = 20
+
+$chkEnableWinScp = New-Object System.Windows.Forms.CheckBox
+$chkEnableWinScp.Text = "Enable WinSCP Upload"
+$chkEnableWinScp.Location = New-Object System.Drawing.Point(0, $wy)
+$chkEnableWinScp.AutoSize = $true
+Style-CheckBox -CheckBox $chkEnableWinScp
+$wsPanel.Controls.Add($chkEnableWinScp)
+$wy += 40
+
+$lblWinScpPath = New-Object System.Windows.Forms.Label
+$lblWinScpPath.Text = "WinSCP Executable Path"
+$lblWinScpPath.Location = New-Object System.Drawing.Point(0, $wy)
+$lblWinScpPath.AutoSize = $true
+Style-Label -Label $lblWinScpPath -Bold
+$wsPanel.Controls.Add($lblWinScpPath)
+$wy += 24
+
+$txtWinScpPath = New-Object System.Windows.Forms.TextBox
+$txtWinScpPath.Location = New-Object System.Drawing.Point(0, $wy)
+$txtWinScpPath.Size = New-Object System.Drawing.Size(560, 28)
+$txtWinScpPath.Text = "C:\Program Files (x86)\WinSCP\WinSCP.com"
+$txtWinScpPath.Enabled = $false
+Style-TextBox -TextBox $txtWinScpPath
+$wsPanel.Controls.Add($txtWinScpPath)
+
+$btnBrowseWinScp = New-Object System.Windows.Forms.Button
+$btnBrowseWinScp.Text = "Browse..."
+$btnBrowseWinScp.Location = New-Object System.Drawing.Point(570, ($wy - 1))
+$btnBrowseWinScp.Size = New-Object System.Drawing.Size(100, 30)
+$btnBrowseWinScp.Enabled = $false
+Style-Button -Button $btnBrowseWinScp -Back $Theme.BackControl -Hover $Theme.Border -Fore $Theme.TextPrimary
+$wsPanel.Controls.Add($btnBrowseWinScp)
+$wy += 46
+
+$lblWinScpConn = New-Object System.Windows.Forms.Label
+$lblWinScpConn.Text = "WinSCP Connection String"
+$lblWinScpConn.Location = New-Object System.Drawing.Point(0, $wy)
+$lblWinScpConn.AutoSize = $true
+Style-Label -Label $lblWinScpConn -Bold
+$wsPanel.Controls.Add($lblWinScpConn)
+$wy += 24
+
+$txtWinScpConn = New-Object System.Windows.Forms.TextBox
+$txtWinScpConn.Location = New-Object System.Drawing.Point(0, $wy)
+$txtWinScpConn.Size = New-Object System.Drawing.Size(560, 28)
+$txtWinScpConn.Text = "sftp://user:password@server/remote/path"
+$txtWinScpConn.Enabled = $false
+$txtWinScpConn.UseSystemPasswordChar = $false
+Style-TextBox -TextBox $txtWinScpConn
+$wsPanel.Controls.Add($txtWinScpConn)
+$wy += 40
+
+$lblWinScpWarn = New-Object System.Windows.Forms.Label
+$lblWinScpWarn.Text = "Note: credentials in the connection string are used only in-memory and inside a temporary script file that is deleted immediately after upload."
+$lblWinScpWarn.Location = New-Object System.Drawing.Point(0, $wy)
+$lblWinScpWarn.Size = New-Object System.Drawing.Size(600, 36)
+Style-Label -Label $lblWinScpWarn -Muted
+$wsPanel.Controls.Add($lblWinScpWarn)
+$wy += 50
+
+$btnTestConn = New-Object System.Windows.Forms.Button
+$btnTestConn.Text = "Test Connection"
+$btnTestConn.Location = New-Object System.Drawing.Point(0, $wy)
+$btnTestConn.Size = New-Object System.Drawing.Size(160, 34)
+$btnTestConn.Enabled = $false
+Style-Button -Button $btnTestConn -Back $Theme.BackControl -Hover $Theme.Border -Fore $Theme.TextPrimary
+$wsPanel.Controls.Add($btnTestConn)
+
+$lblTestResult = New-Object System.Windows.Forms.Label
+$lblTestResult.Text = ""
+$lblTestResult.Location = New-Object System.Drawing.Point(174, ($wy + 8))
+$lblTestResult.AutoSize = $true
+Style-Label -Label $lblTestResult -Muted
+$wsPanel.Controls.Add($lblTestResult)
+
+# Enable/disable WinSCP controls together
+$chkEnableWinScp.Add_CheckedChanged({
+    $enabled = $chkEnableWinScp.Checked
+    $txtWinScpPath.Enabled = $enabled
+    $btnBrowseWinScp.Enabled = $enabled
+    $txtWinScpConn.Enabled = $enabled
+    $btnTestConn.Enabled = $enabled
+})
+
+# ============================================================================
+#  TAB 3: OUTPUT & LOGS
+# ============================================================================
+$logPanel = New-Object System.Windows.Forms.Panel
+$logPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$logPanel.Padding = New-Object System.Windows.Forms.Padding(16)
+$tabLogs.Controls.Add($logPanel)
+
+$logButtonsPanel = New-Object System.Windows.Forms.Panel
+$logButtonsPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$logButtonsPanel.Height = 46
+$logPanel.Controls.Add($logButtonsPanel)
+
+$btnCopyLog = New-Object System.Windows.Forms.Button
+$btnCopyLog.Text = "Copy Log to Clipboard"
+$btnCopyLog.Location = New-Object System.Drawing.Point(0, 6)
+$btnCopyLog.Size = New-Object System.Drawing.Size(180, 32)
+Style-Button -Button $btnCopyLog -Back $Theme.BackControl -Hover $Theme.Border -Fore $Theme.TextPrimary
+$logButtonsPanel.Controls.Add($btnCopyLog)
+
+$btnClearLog = New-Object System.Windows.Forms.Button
+$btnClearLog.Text = "Clear Log"
+$btnClearLog.Location = New-Object System.Drawing.Point(190, 6)
+$btnClearLog.Size = New-Object System.Drawing.Size(120, 32)
+Style-Button -Button $btnClearLog -Back $Theme.BackControl -Hover $Theme.Border -Fore $Theme.TextPrimary
+$logButtonsPanel.Controls.Add($btnClearLog)
+
+$rtbLog = New-Object System.Windows.Forms.RichTextBox
+$rtbLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$rtbLog.BackColor = [System.Drawing.Color]::FromArgb(255, 18, 18, 22)
+$rtbLog.ForeColor = $Theme.TextPrimary
+$rtbLog.Font = New-Object System.Drawing.Font("Consolas", 9.5)
+$rtbLog.ReadOnly = $true
+$rtbLog.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$rtbLog.WordWrap = $true
+$logPanel.Controls.Add($rtbLog)
+$rtbLog.BringToFront()
+
+$btnCopyLog.Add_Click({
+    if ($rtbLog.Text.Length -gt 0) {
+        [System.Windows.Forms.Clipboard]::SetText($rtbLog.Text)
+        $statusLabel.Text = "Log copied to clipboard."
+    }
+})
+
+$btnClearLog.Add_Click({
+    $rtbLog.Clear()
+})
+
+# ============================================================================
+#  ASYNC EXECUTION PLUMBING  (PowerShell runspace + Timer, no UI freeze)
+# ============================================================================
+
+# Shared cancellation flag (simple thread-safe boolean flag via synchronized hashtable)
+$script:SyncState = [hashtable]::Synchronized(@{ CancelRequested = $false })
+
+$script:CurrentPowerShell = $null
+$script:CurrentHandle = $null
+$script:CurrentRunspace = $null
+
+$pollTimer = New-Object System.Windows.Forms.Timer
+$pollTimer.Interval = 150
+
+function Set-UiBusyState {
+    param([bool]$Busy)
+    $generateButton.Enabled = -not $Busy
+    $cancelButton.Enabled = $Busy
+    $cmbKeySize.Enabled = -not $Busy
+    $txtOutFolder.Enabled = -not $Busy
+    $btnBrowse.Enabled = -not $Busy
+    $txtBaseName.Enabled = -not $Busy
+    $chkOverwrite.Enabled = -not $Busy
+    $chkOpenReport.Enabled = -not $Busy
+    $chkEnableWinScp.Enabled = -not $Busy
+    if (-not $Busy) {
+        # Restore WinSCP sub-controls based on checkbox state
+        $wsEnabled = $chkEnableWinScp.Checked
+        $txtWinScpPath.Enabled = $wsEnabled
+        $btnBrowseWinScp.Enabled = $wsEnabled
+        $txtWinScpConn.Enabled = $wsEnabled
+        $btnTestConn.Enabled = $wsEnabled
+    } else {
+        $txtWinScpPath.Enabled = $false
+        $btnBrowseWinScp.Enabled = $false
+        $txtWinScpConn.Enabled = $false
+        $btnTestConn.Enabled = $false
+    }
+}
+
+$pollTimer.Add_Tick({
+    if ($null -eq $script:CurrentHandle) { return }
+
+    if ($script:CurrentHandle.IsCompleted) {
+        $pollTimer.Stop()
+        try {
+            try {
+                $script:CurrentPowerShell.EndInvoke($script:CurrentHandle) | Out-Null
+                if (-not $script:SyncState.CancelRequested) {
+                    $statusLabel.Text = "Done."
+                    $progressBar.Value = [Math]::Min(100, [Math]::Max($progressBar.Value, 100))
+                } else {
+                    $statusLabel.Text = "Cancelled."
+                }
+            } catch {
+                $statusLabel.Text = "Failed. See log for details."
+                Write-GuiLog -LogControl $rtbLog -Message "Generation failed: $($_.Exception.Message)" -Level Error
+            }
+
+            if ($script:CurrentPowerShell.HadErrors) {
+                foreach ($errRec in $script:CurrentPowerShell.Streams.Error) {
+                    Write-GuiLog -LogControl $rtbLog -Message "Error: $($errRec.ToString())" -Level Error
+                }
+            }
+        }
+        finally {
+            if ($script:CurrentPowerShell) { $script:CurrentPowerShell.Dispose() }
+            if ($script:CurrentRunspace) { $script:CurrentRunspace.Close(); $script:CurrentRunspace.Dispose() }
+            $script:CurrentPowerShell = $null
+            $script:CurrentHandle = $null
+            $script:CurrentRunspace = $null
+            Set-UiBusyState -Busy $false
+        }
+    }
+})
+
+# Note: System.Windows.Forms.Timer is a component (not a visual control), so it is
+# simply kept alive via the $pollTimer script-scope variable rather than added to Controls.
+
+# ============================================================================
+#  EVENT HANDLERS
+# ============================================================================
+
+# --- Browse output folder ---
+$btnBrowse.Add_Click({
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = "Select output folder for generated keys and report"
+    if (Test-Path -LiteralPath $txtOutFolder.Text) {
+        $dlg.SelectedPath = $txtOutFolder.Text
+    }
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $txtOutFolder.Text = $dlg.SelectedPath
+    }
+})
+
+# --- Browse WinSCP executable ---
+$btnBrowseWinScp.Add_Click({
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Filter = "WinSCP Executable (WinSCP.com;WinSCP.exe)|WinSCP.com;WinSCP.exe|All files (*.*)|*.*"
+    $dlg.Title = "Locate WinSCP.com"
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $txtWinScpPath.Text = $dlg.FileName
+    }
+})
+
+# --- Test WinSCP connection ---
+$btnTestConn.Add_Click({
+    $lblTestResult.Text = "Testing..."
+    $lblTestResult.ForeColor = $Theme.TextMuted
+    $form.Refresh()
+
+    if (-not (Test-Path -LiteralPath $txtWinScpPath.Text)) {
+        $lblTestResult.Text = "WinSCP executable not found."
+        $lblTestResult.ForeColor = $Theme.Danger
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($txtWinScpConn.Text)) {
+        $lblTestResult.Text = "Connection string is empty."
+        $lblTestResult.ForeColor = $Theme.Danger
+        return
+    }
+
+    $tempTestScript = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "winscp_test_$([Guid]::NewGuid().ToString('N')).txt")
+    try {
+        $lines = @(
+            "option batch abort",
+            "option confirm off",
+            "open `"$($txtWinScpConn.Text)`"",
+            "pwd",
+            "close",
+            "exit"
+        )
+        [System.IO.File]::WriteAllLines($tempTestScript, $lines)
+
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $txtWinScpPath.Text
+        $psi.Arguments = "/script=`"$tempTestScript`""
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $null = $proc.StandardOutput.ReadToEnd()
+        $errOut = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit(15000) | Out-Null
+
+        if (-not $proc.HasExited) {
+            try { $proc.Kill() } catch {}
+            $lblTestResult.Text = "Connection test timed out."
+            $lblTestResult.ForeColor = $Theme.Warning
+        } elseif ($proc.ExitCode -eq 0) {
+            $lblTestResult.Text = "Connection successful."
+            $lblTestResult.ForeColor = $Theme.Success
+        } else {
+            $lblTestResult.Text = "Connection failed (exit $($proc.ExitCode))."
+            $lblTestResult.ForeColor = $Theme.Danger
+        }
+    } catch {
+        $lblTestResult.Text = "Error: $($_.Exception.Message)"
+        $lblTestResult.ForeColor = $Theme.Danger
+    } finally {
+        if (Test-Path -LiteralPath $tempTestScript) {
+            Remove-Item -LiteralPath $tempTestScript -Force -ErrorAction SilentlyContinue
+        }
+    }
+})
+
+# --- Cancel button ---
+$cancelButton.Add_Click({
+    $script:SyncState.CancelRequested = $true
+    $statusLabel.Text = "Cancelling..."
+    Write-GuiLog -LogControl $rtbLog -Message "Cancellation requested by user." -Level Warning
+})
+
+# --- Generate button ---
+$generateButton.Add_Click({
+    # Guard against double-click / re-entrancy while a job is already running
+    if (-not $generateButton.Enabled -or $null -ne $script:CurrentHandle) {
+        return
+    }
+
+    # --- Gather & validate configuration on the UI thread ---
+    $keySize = 0
+    if (-not [int]::TryParse($cmbKeySize.SelectedItem, [ref]$keySize)) {
+        [System.Windows.Forms.MessageBox]::Show("Please select a valid key size.", "Invalid Configuration", "OK", "Warning") | Out-Null
+        return
+    }
+
+    $config = @{
+        KeySize          = $keySize
+        OutputFolder     = $txtOutFolder.Text.Trim()
+        BaseName         = $txtBaseName.Text.Trim()
+        Overwrite        = $chkOverwrite.Checked
+        OpenReport       = $chkOpenReport.Checked
+        EnableWinScp     = $chkEnableWinScp.Checked
+        WinScpPath       = $txtWinScpPath.Text.Trim()
+        WinScpConnection = $txtWinScpConn.Text.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($config.OutputFolder)) {
+        [System.Windows.Forms.MessageBox]::Show("Please specify an output folder.", "Invalid Configuration", "OK", "Warning") | Out-Null
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($config.BaseName) -or ($config.BaseName -match '[\\/:*?"<>|]')) {
+        [System.Windows.Forms.MessageBox]::Show("Please specify a valid report base name (no path characters).", "Invalid Configuration", "OK", "Warning") | Out-Null
+        return
+    }
+    if ($config.EnableWinScp -and [string]::IsNullOrWhiteSpace($config.WinScpConnection)) {
+        [System.Windows.Forms.MessageBox]::Show("WinSCP upload is enabled but no connection string was provided.", "Invalid Configuration", "OK", "Warning") | Out-Null
+        return
+    }
+
+    # Switch to Logs tab so the user sees progress immediately
+    $tabControl.SelectedTab = $tabLogs
+    $rtbLog.Clear()
+    $progressBar.Value = 0
+    $statusLabel.Text = "Starting..."
+    $script:SyncState.CancelRequested = $false
+
+    Set-UiBusyState -Busy $true
+
+    # --- Build a dedicated runspace + PowerShell instance for the background work ---
+    $runspace = [runspacefactory]::CreateRunspace()
+    $runspace.ApartmentState = "STA"
+    $runspace.ThreadOptions = "ReuseThread"
+    $runspace.Open()
+    $runspace.SessionStateProxy.SetVariable("SyncStateRef", $script:SyncState)
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $runspace
+
+    # Background script block: re-declares the logic functions inside the runspace
+    # (functions defined in the main script scope are captured by reference via
+    # a here-string based re-definition is avoided; instead we pass function bodies
+    # through by dot-sourcing this same script file's function definitions).
+    $backgroundScript = {
+        param($Config, $LogControl, $ProgressCtrl, $StatusCtrl, $SyncStateRef, $ScriptPath)
+
+        # Re-import the logic functions from this same script file into the runspace
+        . $ScriptPath -DefineFunctionsOnly
+
+        $logAction = {
+            param($msg, $level = "Info")
+            Write-GuiLog -LogControl $LogControl -Message $msg -Level $level
+        }.GetNewClosure()
+
+        $progressAction = {
+            param($pct, $status)
+            $setAction = {
+                param($pb, $st, $p, $s)
+                $pb.Value = [Math]::Max(0, [Math]::Min(100, $p))
+                $st.Text = $s
+            }
+            if ($ProgressCtrl.InvokeRequired) {
+                $ProgressCtrl.Invoke([Action[object,object,object,object]]$setAction, @($ProgressCtrl, $StatusCtrl, $pct, $status)) | Out-Null
+            } else {
+                & $setAction $ProgressCtrl $StatusCtrl $pct $status
+            }
+        }.GetNewClosure()
+
+        $cancelCheck = { return [bool]$SyncStateRef.CancelRequested }.GetNewClosure()
+
+        Start-KeyGenerationPipeline -Config $Config -Log $logAction -ReportProgress $progressAction -ShouldCancel $cancelCheck
+    }
+
+    [void]$ps.AddScript($backgroundScript)
+    [void]$ps.AddArgument($config)
+    [void]$ps.AddArgument($rtbLog)
+    [void]$ps.AddArgument($progressBar)
+    [void]$ps.AddArgument($statusLabel)
+    [void]$ps.AddArgument($script:SyncState)
+    [void]$ps.AddArgument($PSCommandPath)
+
+    $script:CurrentPowerShell = $ps
+    $script:CurrentRunspace = $runspace
+    $script:CurrentHandle = $ps.BeginInvoke()
+    $pollTimer.Start()
+})
+
+# ============================================================================
+#  FORM CLEANUP ON EXIT
+# ============================================================================
+$form.Add_FormClosing({
+    param($sender, $e)
+    if ($script:CurrentHandle -and -not $script:CurrentHandle.IsCompleted) {
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "A key generation job is still running. Cancel it and exit?",
+            "Job In Progress", "YesNo", "Warning")
+        if ($result -eq [System.Windows.Forms.DialogResult]::No) {
+            $e.Cancel = $true
+            return
+        }
+        $script:SyncState.CancelRequested = $true
+        try { $script:CurrentPowerShell.Stop() } catch {}
+    }
+    $pollTimer.Stop()
+    $pollTimer.Dispose()
+    if ($script:CurrentPowerShell) { try { $script:CurrentPowerShell.Dispose() } catch {} }
+    if ($script:CurrentRunspace) { try { $script:CurrentRunspace.Close(); $script:CurrentRunspace.Dispose() } catch {} }
+})
+
+# ============================================================================
+#  SHOW THE FORM
+# ============================================================================
+Write-GuiLog -LogControl $rtbLog -Message "Application ready. Configure options and click 'Generate Keys' to begin." -Level Info
+[System.Windows.Forms.Application]::Run($form)
