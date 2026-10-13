@@ -1,0 +1,27 @@
+@echo off
+setlocal
+
+set "WGET=C:\Applications\wget.exe"
+set "OUTPUT=C:\Applications\mufg.PNG"
+
+if not exist "%WGET%" (
+    echo wget.exe not found at: %WGET%
+    pause
+    exit /b 1
+)
+
+"%WGET%" ^
+  --no-verbose ^
+  --output-document="%OUTPUT%" ^
+  --tries=3 ^
+  --timeout=30 ^
+  https://www.bk.mufg.jp/global/imgs/bg_globaltop_stadium_202510.png
+
+if %errorlevel% equ 0 (
+    echo Downloaded successfully:
+    echo %OUTPUT%
+) else (
+    echo Download failed. Error code: %errorlevel%
+)
+
+pause
