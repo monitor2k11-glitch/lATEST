@@ -1,0 +1,106 @@
+EDM Cobalt Changes - Test Plan
+1. Prerequisites and Test Data
+1.	Agree the business dates to be tested: Business Date T, plus subsequent dates T+1, 
+T+2, …, T+N.
+2.	EDM to supply all input files for each agreed business date, including both affected 
+and unaffected files.
+3.	Test customer data must cover the following scenarios:
+Criteria 1: Customer has a transaction associated in at least one source system 
+- Bloomberg, Fidessa [*], Martini, or Murex - for the business date.
+Criteria 2: Customer may be new and may not have any transaction associated 
+for the business date.
+2. Environment Preparation
+1.	Compliance Technology Team to secure NON-PROD environments for:
+o	Trade Surveillance
+o	Siron AML/KYC
+o	Intellimatch - requires a fresh engagement
+2.	Compliance Technology Team to take database backups in the secured NON-PROD 
+environment for:
+o	Trade Surveillance
+o	Siron AML/KYC
+3.	Raise a request with the SQL DBA team to take PROD database backups for:
+o	Trade Surveillance
+o	Siron AML/KYC
+4.	Raise a request with the SQL DBA team to restore the PROD databases into the 
+secured NON-PROD test environment.
+5.	Raise a data-borrowing request, obtain approvals, and obtain PROD data feeds for 
+Business Dates T, T+1, T+2, …, T+N.
+3. Testing Sequence - Business Date T
+3.1 PROD Environment
+1.	Wait for the PROD batch for Business Date T to complete.
+2.	Collect and retain the PROD-generated input and output files for comparison.
+3.2 TEST Environment
+1.	Order the Trade Surveillance and Siron AML/KYC batches for Business Date T.
+2.	Place the EDM-supplied files and the PROD-collected files for Business Date T into 
+the \input\ folder.
+3.	Start and run the Trade Surveillance batch.
+4.	Collect the Trade Surveillance output files.
+5.	Place the required output files into the Siron AML/KYC input folders.
+6.	Run the Siron AML/KYC batch.
+7.	Collect the Siron AML/KYC output files.
+8.	Send the required files to Intellimatch for manual loading and report generation.
+4. Testing Checks
+4.1 Trade Surveillance Checks
+REF
+CHECK
+A.1
+Confirm that EDM files loaded successfully into the Staging Area via Control-M.
+A.2
+Compare EDM Staging tables in TEST against EDM Staging tables in PROD.
+A.3
+Compare EDM Central Model tables in TEST against EDM Central Model tables in 
+PROD.
+A.4
+Compare Siron.Customer table in TEST against Siron.Customer table in PROD.
+A.5
+Compare SironHistory.Customer table in TEST against SironHistory.Customer table in PROD.
+A.6
+Compare the in_Customer file generated in TEST against the in_Customer file generated 
+in PROD.
+A.7
+Compare all other in_* files generated in TEST against the corresponding in_* files 
+generated in PROD.
+A.8
+Trace the data flow for changed records from EDM through to the generated output 
+files.
+4.2 Siron AML/KYC Checks
+REF
+CHECK
+B.1
+Compare GWG tables related to Customers in TEST against the equivalent GWG 
+tables in PROD.
+B.2
+Business users to review the Siron GUI in TEST and compare the results against 
+PROD.
+4.3 Siron Reconciliation Checks
+REF
+CHECK
+C.1
+Compare reconciliation tables related to Customers in TEST against the equivalent 
+reconciliation tables in PROD.
+C.2
+Compare the reconciliation outcomes between TEST and PROD.
+4.4 Intellimatch Checks
+REF
+CHECK
+D.1
+Intellimatch team to manually run the batch in NON-PROD and share the generated 
+reports.
+D.2
+Business users to review the reports and compare the results against PROD.
+5. Repeat for Subsequent Business Dates
+Repeat the full testing sequence and all checks in Sections 3 and 4 for each remaining 
+business date: T+1, T+2, ... T+N.
+6. Exit Criteria
+Testing can be considered complete when:
+*	All EDM files have loaded successfully through Control-M.
+*	TEST and PROD comparisons show no unexplained differences.
+*	Changed records can be traced end-to-end from EDM to the downstream output 
+files.
+*	Siron AML/KYC GUI results are reviewed and approved by the Business.
+*	Siron reconciliation outcomes match expected PROD results and breaks are clear
+*	Intellimatch reports are generated, reviewed, and approved by the Business.
+*	All defects are logged, assessed, and either resolved or formally accepted.
+7. Environment handover
+Restore the database data with the backup taken before we started testing.
+
